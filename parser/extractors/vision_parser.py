@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover
     anthropic = None
 
 
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-sonnet-5"
 
 SYSTEM_PROMPT = f"""Sos un lector de planillas de clínicas dentales argentinas,
 manuscritas o impresas. Te paso una imagen (foto de cuaderno, planilla

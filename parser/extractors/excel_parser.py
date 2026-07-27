@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover
     anthropic = None
 
 
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-sonnet-5"
 
 SYSTEM_PROMPT = f"""Sos un normalizador de datos para clínicas dentales argentinas.
 Te paso los encabezados de columnas de un Excel/CSV subido por el dueño de

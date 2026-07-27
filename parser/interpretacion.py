@@ -43,7 +43,7 @@ except ImportError:  # pragma: no cover
     anthropic = None
 
 
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-sonnet-5"
 
 # Preguntas de la Guía de Diagnóstico que son puramente cualitativas — no
 # alimentan ninguna fórmula, pero sí dan contexto para interpretar los

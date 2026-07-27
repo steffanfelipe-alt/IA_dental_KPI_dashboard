@@ -198,8 +198,10 @@ rankear por encima de un gap mediano contra un dato oficial.
 
 ## Pendiente
 
-- Reemplazar el placeholder `"claude-sonnet-4-6"` por el string de modelo
-  vigente al momento de deployar.
+- ~~Reemplazar el placeholder `"claude-sonnet-4-6"` por el string de modelo
+  vigente al momento de deployar.~~ Hecho 2026-07-27: `MODEL = "claude-sonnet-5"`
+  en `interpretacion.py`, `extractors/excel_parser.py` y
+  `extractors/vision_parser.py`.
 - Conectar `cargar_variables_de_supabase` / `guardar_variables_en_supabase`
   con la tabla `kpi_snapshots` real.
 - Definir qué pasa cuando un archivo nuevo contradice una variable que el

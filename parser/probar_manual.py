@@ -86,6 +86,17 @@ if resultado:
             for info in resultado["kpis_calculados"].values()
         ]
         st.dataframe(filas, use_container_width=True)
+
+        st.markdown("**2a. ¿De dónde sale este número?**")
+        st.caption(
+            "Trazabilidad (Fase 0): qué celda, agregación y conversión de unidad "
+            "componen cada variable de cada KPI — para poder auditar un valor raro "
+            "sin volver a correr todo a mano."
+        )
+        for kpi_id, info in resultado["kpis_calculados"].items():
+            with st.expander(f"{info['kpi_nombre']} — {fmt_por_unidad(info['valor'], info['unidad'])}"):
+                for var, texto in (info.get("trazabilidad_legible") or {}).items():
+                    st.markdown(f"- **{var}**: {texto}")
     else:
         st.caption("Ninguno todavía — depende de qué variables falten.")
 

@@ -18,13 +18,19 @@ Flujo:
      conflictos pendientes de confirmación.
 """
 
+import inspect
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional
 
 from schema import KPI_BY_ID
+from calidad import evaluar_calidad
+from catalogo_tecnologico import mapear_oportunidades
 from coverage import VariableValue, evaluar_cobertura, variables_para_wizard
 from conflictos import resolver_conflictos
+from diagnostico import diagnosticar
+from matching import RegistroClientes
+from priorizacion import priorizar_oportunidades
 from validacion import validar_variable, validar_identidades
 from reconciliacion import reconciliar
 from derivacion import derivar_variables_faltantes
@@ -44,18 +50,28 @@ EXTRACTOR_POR_EXTENSION = {
 }
 
 
-def extraer_archivo(path: str, client=None) -> tuple[dict[str, VariableValue], dict[int, object]]:
+def extraer_archivo(
+    path: str, client=None, registro_clientes: Optional[RegistroClientes] = None,
+) -> tuple[dict[str, VariableValue], dict[int, object]]:
     """
     Devuelve (variables, tasas_declaradas). No todos los extractores
     conocen tasas_declaradas (hoy solo excel_parser, ver reconciliacion.py
     — vision_parser sigue devolviendo solo variables): se normaliza acá
     para que pipeline.py no necesite saber qué extractor se usó.
+
+    `registro_clientes` (Fase 2, matching.py): solo se pasa a extractores
+    que lo soportan (hoy: excel_parser.parsear_excel) — se detecta por
+    firma en vez de hardcodear "si es excel_parser", así un extractor
+    nuevo que lo declare se engancha solo, sin tocar este módulo.
     """
     ext = Path(path).suffix.lower()
     extractor = EXTRACTOR_POR_EXTENSION.get(ext)
     if extractor is None:
         raise ValueError(f"Formato no soportado: {ext}. Soportados: {list(EXTRACTOR_POR_EXTENSION)}")
-    resultado = extractor(path, client)
+    kwargs = {}
+    if registro_clientes is not None and "registro_clientes" in inspect.signature(extractor).parameters:
+        kwargs["registro_clientes"] = registro_clientes
+    resultado = extractor(path, client, **kwargs)
     if isinstance(resultado, tuple):
         variables, tasas_declaradas = resultado
     else:
@@ -157,6 +173,7 @@ def procesar_migracion(
     archivos: list[str],
     variables_previas: Optional[dict[str, VariableValue]] = None,
     client=None,
+    respuestas_diagnostico: Optional[dict[str, str]] = None,
 ) -> dict:
     """
     Devuelve el payload listo para el frontend:
@@ -169,10 +186,26 @@ def procesar_migracion(
         "preguntas_wizard": [ {variable, tipo, kpis_que_desbloquea, prioridad} ],
         "conflictos_pendientes": [ {variable, pregunta, opciones, permite_valor_manual} ],
         "variables_a_confirmar": [ ... ],       # baja confianza, mostrar como sugerencia
-        "variables": {...}                      # snapshot completo para guardar en la DB
+        "variables": {...},                     # snapshot completo para guardar en la DB
+        "calidad_datos": ReporteCalidad(...),   # Fase 3: completitud/consistencia/confianza agregados
+        "diagnostico": [Diagnostico(...)] | None,            # Fase 4, solo si se pasa respuestas_diagnostico
+        "oportunidades_priorizadas": [OportunidadPriorizada(...)] | None,  # Fases 5-6, idem
       }
+
+    `respuestas_diagnostico` (opcional, Fase 4-6): si se pasan las
+    respuestas de la Guía de Diagnóstico, además de los KPIs se devuelve
+    el diagnóstico estructurado (diagnostico.py) y las oportunidades del
+    catálogo tecnológico ya priorizadas (catalogo_tecnologico.py +
+    priorizacion.py) — antes de esta fase, ninguno de los tres módulos lo
+    llamaba nadie en producción. Sin este argumento (default None), el
+    comportamiento es exactamente el de antes: ambas claves quedan en
+    None y no se ejecuta nada nuevo.
     """
-    extraidas_por_archivo = [extraer_archivo(a, client) for a in archivos]
+    # Un solo RegistroClientes para TODA la migración (Fase 2): así "Juan
+    # Pérez" en un archivo y "J. Perez" en otro resuelven al mismo
+    # paciente, no solo dentro de una misma hoja.
+    registro_clientes = RegistroClientes()
+    extraidas_por_archivo = [extraer_archivo(a, client, registro_clientes=registro_clientes) for a in archivos]
     extraidas = [variables for variables, _ in extraidas_por_archivo]
     tasas_declaradas: dict[int, object] = {}
     for _, tasas in extraidas_por_archivo:
@@ -230,7 +263,7 @@ def procesar_migracion(
     cobertura = evaluar_cobertura(variables, variables_en_conflicto)
     preguntas = variables_para_wizard(cobertura)
 
-    return {
+    resultado = {
         "kpis_calculados": {
             kpi_id: {**info, "kpi_nombre": KPI_BY_ID[kpi_id].nombre}
             for kpi_id, info in cobertura.kpis_calculados.items()
@@ -264,6 +297,22 @@ def procesar_migracion(
                 "permite_valor_manual": True,
             }
             for c in conflictos
+        ] + [
+            # Fase 2: matches de identidad de paciente en zona gris — el
+            # mismo canal que un conflicto de variable, mismo principio
+            # ("ante empate, decide el dueño, no el sistema"). Nunca se
+            # fusionaron solos; acá se muestran para que el dueño confirme.
+            {
+                "variable": "identidad_paciente",
+                "pregunta": f"¿\"{amb['nombre']}\" es la misma persona que \"{amb['candidato_existente']}\"?",
+                "opciones": [
+                    {"valor": "misma_persona", "descripcion": f"Sí, es {amb['candidato_existente']}"},
+                    {"valor": "persona_distinta", "descripcion": "No, es alguien distinto"},
+                ],
+                "permite_valor_manual": False,
+                "similitud": amb["similitud"],
+            }
+            for amb in registro_clientes.ambiguos
         ],
         "variables_a_confirmar": [
             {"variable": v, "valor_sugerido": variables[v].valor, "fuente": variables[v].fuente}
@@ -271,6 +320,31 @@ def procesar_migracion(
         ],
         "variables": variables,
     }
+    # Fase 3 (Data Quality Report): pura agregación de lo que ya está en
+    # `resultado` — no dispara ninguna extracción ni llamada a Claude.
+    resultado["calidad_datos"] = evaluar_calidad(resultado)
+
+    # Fases 4-6: diagnóstico estructurado + oportunidades del catálogo ya
+    # priorizadas. Todo determinista, sin llamar a Claude — eso lo hace
+    # interpretacion.py después, recibiendo este diagnóstico como input
+    # (ver SYSTEM_PROMPT_BASE regla 8). Solo corre si el llamador pasó
+    # respuestas de la Guía de Diagnóstico; sin eso no hay con qué cruzar
+    # el gap y no tiene sentido diagnosticar nada.
+    if respuestas_diagnostico is not None:
+        diagnosticos = diagnosticar(resultado["kpis_calculados"], respuestas_diagnostico, variables=variables)
+        oportunidades = mapear_oportunidades(diagnosticos, contexto_clinica=respuestas_diagnostico)
+        # impacto parejo (1.0) por default: ese criterio de negocio sigue
+        # sin recalcularse acá (mismo principio que priorizar_kpis) — el
+        # llamador puede pasar su propio impacto_por_kpi más adelante si
+        # hace falta discriminar entre KPIs.
+        impacto_por_kpi = {d.kpi_id: 1.0 for d in diagnosticos}
+        resultado["diagnostico"] = diagnosticos
+        resultado["oportunidades_priorizadas"] = priorizar_oportunidades(oportunidades, impacto_por_kpi, top_n=5)
+    else:
+        resultado["diagnostico"] = None
+        resultado["oportunidades_priorizadas"] = None
+
+    return resultado
 
 
 def resolver_conflicto(

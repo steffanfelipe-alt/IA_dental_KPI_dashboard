@@ -31,6 +31,7 @@ benchmarks (`referencias/benchmarks_research_AR.md`) están incorporadas acá:
   propio historial (§4.4) — ver `peso_benchmark_vs_historial`.
 """
 
+import dataclasses
 import json
 from typing import Optional
 
@@ -38,6 +39,15 @@ from schema import KPI_BY_ID
 from benchmarks import calcular_gap, Gap
 from claude_utils import extraer_texto
 from formato import fmt_por_unidad
+# Re-exportados desde contexto_cualitativo.py (Fase 4): se movieron ahí
+# para romper un import circular con diagnostico.py, que también los
+# necesita. Quien ya los importaba desde acá (ver test_benchmarks.py)
+# sigue funcionando igual.
+from contexto_cualitativo import (  # noqa: F401
+    CONTEXTO_CUALITATIVO_POR_KPI,
+    CONTEXTO_GENERAL,
+    construir_contexto_cualitativo,
+)
 
 try:
     import anthropic
@@ -47,57 +57,20 @@ except ImportError:  # pragma: no cover
 
 MODEL = "claude-sonnet-5"
 
-# Preguntas de la Guía de Diagnóstico que son puramente cualitativas — no
-# alimentan ninguna fórmula, pero sí dan contexto para interpretar los
-# números. Mapeadas a qué bloque/tema tocan, para poder filtrar cuáles
-# son relevantes según qué KPI se está interpretando.
-#
-# P51 ("¿hay una época del año donde esto se complica?") está conectada a
-# los KPIs 4 (no-show) y 12 (producción por sillón) a propósito: Mar del
-# Plata tiene estacionalidad turística fuerte, y sin ese contexto el
-# asistente no puede distinguir un pico estacional de un problema
-# estructural (ver regla 6 del system prompt).
-CONTEXTO_CUALITATIVO_POR_KPI: dict[int, list[str]] = {
-    3:  ["P1", "P37"],                          # tasa de agendamiento <- cómo agendan, tiempo de respuesta
-    4:  ["P1", "P2", "P5", "P6", "P7", "P51"],  # no-show <- confirmación, lista de espera, agenda duplicada, estacionalidad
-    5:  ["P19", "P20", "P23"],                  # aceptación de presupuestos <- cómo presentan, si hacen seguimiento
-    6:  ["P19", "P24", "P25"],                  # ticket promedio <- cómo arman presupuesto, financiación
-    7:  ["P22"],                                # finalización <- qué pasa si el paciente deja de venir
-    8:  ["P40", "P42"],                         # recall <- si hacen seguimiento post-tratamiento
-    9:  ["P42", "P43"],                         # reactivación <- relación con pacientes que dejan de venir
-    10: ["P41"],                                # reseñas <- si piden reseñas y de qué forma
-    12: ["P29", "P30", "P51"],                  # producción por sillón <- reprogramaciones, estacionalidad
-    13: ["P24", "P26", "P27"],                  # tasa de cobro <- medios de cobro, pagos atrasados, integración
-    15: ["P8", "P9", "P28"],                    # horas en tareas repetitivas <- qué tan manual es cada proceso
-    19: ["P36", "P38"],                         # costo adquisición <- de dónde vienen los pacientes hoy
-}
 
-# Preguntas que dan contexto general de toda la clínica, sin importar qué
-# KPI se esté mirando (calificación, estacionalidad, riesgo, tecnología).
-CONTEXTO_GENERAL = ["P32", "P33", "P34", "P44", "P45", "P46", "P48", "P49", "P50", "P51", "P52", "P53"]
-
-
-def construir_contexto_cualitativo(
-    respuestas_diagnostico: dict[str, str],
-    kpi_id: Optional[int] = None,
-) -> str:
-    """
-    Arma un resumen legible de las respuestas cualitativas relevantes.
-    Si se pasa un kpi_id, prioriza las preguntas de ese KPI + el contexto
-    general; si no, devuelve todo lo disponible.
-    """
-    preguntas_relevantes = list(CONTEXTO_GENERAL)
-    if kpi_id is not None:
-        preguntas_relevantes = CONTEXTO_CUALITATIVO_POR_KPI.get(kpi_id, []) + preguntas_relevantes
-
-    lineas = []
-    for p in preguntas_relevantes:
-        if p in respuestas_diagnostico:
-            lineas.append(f"- {p}: {respuestas_diagnostico[p]}")
-
-    if not lineas:
-        return "(sin respuestas cualitativas cargadas todavía para este contexto)"
-    return "\n".join(lineas)
+def _serializar_diagnostico(diagnostico):
+    """Acepta un `diagnostico.Diagnostico`, una lista de ellos, o None —
+    sin importar el módulo diagnostico.py (evita el import circular: ese
+    módulo ya importa de acá contexto_cualitativo indirectamente).
+    dataclasses.asdict funciona sobre cualquier dataclass sin conocer su
+    tipo concreto."""
+    if diagnostico is None:
+        return None
+    if isinstance(diagnostico, list):
+        return [dataclasses.asdict(d) if dataclasses.is_dataclass(d) else d for d in diagnostico]
+    if dataclasses.is_dataclass(diagnostico):
+        return dataclasses.asdict(diagnostico)
+    return diagnostico
 
 
 def peso_benchmark_vs_historial(semanas_de_datos_propios: int) -> dict:
@@ -190,23 +163,19 @@ Reglas de razonamiento:
    X a Y, mejorando o empeorando" — la referencia externa pasa a segundo
    plano.
 
-8. Razonamiento cruzado entre KPIs (solo si el payload trae `kpis`, plural
-   — ver `interpretar_panel`): un KPI aislado fuera de rango no siempre es
-   el problema en sí, puede ser el efecto de otro. Ejemplos: aceptación de
-   presupuestos alta pero ticket promedio bajo → probable problema de mix
-   de tratamientos, no de cómo se cierra la venta. Tasa de agendamiento
-   alta pero no-show también alto → se está agendando gente que no está
-   realmente comprometida, mirá si hay contexto de confirmación de turnos.
-   Producción por hora-sillón baja con horas-sillón ocupadas altas →
-   problema de mix/ticket, no de ocupación. Preferí explicar un gap
-   cruzando OTROS KPIs del mismo payload antes que usar solo contexto
-   cualitativo o benchmark — es el dato más fuerte que tenés, viene de la
-   misma clínica y del mismo período.
-
 7. Nunca dictamines con más seguridad de la que los datos permiten. Si el
    contexto es insuficiente para explicar un gap, decilo así ("el número
    está bajo, pero no tengo contexto suficiente para saber por qué —
    habría que preguntar sobre X") en vez de inventar una causa.
+
+8. Si el payload trae `diagnostico` (armado por diagnostico.py ANTES de
+   esta llamada, no por vos): sus `contradicciones` y `patrones_cruzados`
+   ya están verificados de forma determinista contra los datos — repetilos
+   y explicalos en tu respuesta, no los vuelvas a derivar ni los
+   contradigas. Su `estado` (HEALTHY/WATCH/PROBLEM/CRITICAL/
+   INSUFFICIENT_EVIDENCE) te dice qué tan firme podés ser: nunca uses un
+   tono más seguro que ese estado — INSUFFICIENT_EVIDENCE significa decir
+   explícitamente que falta información, no inventar una causa igual.
 
 Tu salida siempre tiene: (a) qué dice el número, (b) qué explica el
 contexto cualitativo sobre ese número, (c) la conclusión — sea una causa
@@ -220,6 +189,7 @@ def interpretar_kpi(
     respuestas_diagnostico: dict[str, str],
     semanas_de_datos_propios: Optional[int] = None,
     serie_historica: Optional[dict] = None,
+    diagnostico=None,
     client=None,
 ) -> dict:
     """
@@ -235,6 +205,12 @@ def interpretar_kpi(
     de asumir 0 — antes ningún llamador la calculaba, así que la
     ponderación siempre terminaba apoyándose al máximo en el benchmark
     externo (hallazgo 4).
+
+    `diagnostico` (Fase 4, opcional — compatible hacia atrás con
+    `client=None` en los tests): un `diagnostico.Diagnostico` ya calculado
+    para este KPI. Si se pasa, sus contradicciones/patrones/estado viajan
+    en el payload como hechos ya verificados (ver regla 8 del prompt) — el
+    modelo no tiene que re-derivarlos desde cero.
     """
     if semanas_de_datos_propios is None:
         semanas_de_datos_propios = semanas_desde_serie(serie_historica)
@@ -253,6 +229,7 @@ def interpretar_kpi(
         "ponderacion": ponderacion,
         "semanas_de_datos_propios": semanas_de_datos_propios,
         "serie_historica_propia": serie_historica or {},
+        "diagnostico": _serializar_diagnostico(diagnostico),
     }
 
     if client is None:
@@ -272,6 +249,7 @@ def interpretar_kpi(
 def interpretar_panel(
     kpis_calculados: dict[int, dict],
     respuestas_diagnostico: dict[str, str],
+    diagnostico=None,
     client=None,
 ) -> dict:
     """
@@ -280,13 +258,17 @@ def interpretar_panel(
     cruzar nada (hallazgo 2 del informe de deficiencias: "el agente no
     relaciona métricas que podrían combinarse"). Acá el modelo recibe
     todos los KPIs ya calculados, su serie histórica, y el contexto
-    cualitativo completo, y puede razonar sobre el conjunto (regla 8 del
-    system prompt) — ej. aceptación alta + ticket bajo = problema de mix,
-    no de cierre de venta.
+    cualitativo completo, y puede razonar sobre el conjunto — ej.
+    aceptación alta + ticket bajo = problema de mix, no de cierre de venta.
 
     `kpis_calculados`: el dict que devuelve pipeline.procesar_migracion
     en "kpis_calculados" (kpi_id -> {"valor", "unidad", "confianza",
     "serie", ...}).
+
+    `diagnostico` (Fase 4, opcional): la lista de `diagnostico.Diagnostico`
+    que devuelve `diagnostico.diagnosticar()` — ya trae los patrones
+    cruzados y contradicciones estructurados (regla 8 del prompt), así
+    que el modelo no tiene que re-derivarlos desde el payload crudo.
     """
     contexto_general = construir_contexto_cualitativo(respuestas_diagnostico, kpi_id=None)
 
@@ -313,7 +295,11 @@ def interpretar_panel(
             "serie_historica_propia": serie or {},
         })
 
-    payload = {"kpis": kpis_payload, "contexto_general": contexto_general}
+    payload = {
+        "kpis": kpis_payload,
+        "contexto_general": contexto_general,
+        "diagnostico": _serializar_diagnostico(diagnostico),
+    }
 
     if client is None:
         return {"payload_enviado_al_asistente": payload, "interpretacion": None}
@@ -341,3 +327,159 @@ def _gap_a_dict(gap: Gap) -> dict:
         base["magnitud_pct"] = gap.magnitud_pct
         base["rango_benchmark"] = [gap.benchmark.rango_bajo, gap.benchmark.rango_alto]
     return base
+
+
+# ---------------------------------------------------------------------------
+# Fase 7: interpretar_clinica — el tercer entry point (Tabla 4 del
+# Documento Maestro: interpretar_kpi explica un indicador, interpretar_panel
+# relaciona indicadores, interpretar_clinica construye el diagnóstico
+# sistémico completo). Convive con los dos anteriores, no los reemplaza.
+# ---------------------------------------------------------------------------
+
+SYSTEM_PROMPT_CLINICA = """Sos el asistente de diagnóstico sistémico de Agencia IA
+para clínicas dentales en Argentina. A diferencia de explicar un KPI o un
+panel de KPIs, acá tu trabajo es construir el INFORME EJECUTIVO completo
+de la clínica: no una lista de indicadores, sino qué está pasando, dónde
+está el principal cuello de botella, por qué creemos que ocurre, y qué
+intervención conviene implementar primero.
+
+El payload que recibís ya viene estructurado por el Diagnostic Engine
+(diagnostico.py) y el catálogo tecnológico (catalogo_tecnologico.py) — tu
+trabajo es interpretar y redactar, NO descubrir la lógica de negocio
+desde cero:
+- `diagnosticos`: por cada KPI con problema, su estado
+  (HEALTHY/NORMAL/WATCH/PROBLEM/CRITICAL/INSUFFICIENT_EVIDENCE), hechos,
+  anomalías (con la confiabilidad del benchmark ya resuelta), hipótesis,
+  contradicciones YA detectadas de forma determinista, y qué información falta.
+- `oportunidades_priorizadas`: intervenciones reales del catálogo de
+  Agencia IA, ya ordenadas por score (gap × impacto × confiabilidad ×
+  addressability × suficiencia de datos).
+- `calidad_datos`: completitud/consistencia/confianza del dato de base.
+
+Reglas:
+
+1. Nunca redimensiones ni contradigas lo que `diagnosticos[i].estado` ya
+   dice. INSUFFICIENT_EVIDENCE significa decir "no hay evidencia
+   suficiente", no inventar una causa igual.
+2. Las `contradicciones` y `patrones_cruzados` de cada diagnóstico ya
+   están verificados — repetilos y explicalos, no los vuelvas a derivar
+   ni los contradigas.
+3. Cada oportunidad tecnológica que menciones tiene que salir de
+   `oportunidades_priorizadas` — nunca inventes una automatización o un
+   proceso que no esté en esa lista (§13 del Documento Maestro: la
+   tecnología es consecuencia del diagnóstico, no una moda).
+4. Si `calidad_datos.completitud_pct` o `.confianza_promedio` son bajos,
+   decilo explícitamente al principio del informe — el resto tiene que
+   leerse con esa salvedad.
+5. Separá SIEMPRE hechos confirmados, causas probables, e hipótesis — no
+   los mezcles en la misma oración con el mismo tono de seguridad.
+
+Estructura tu respuesta en estas 10 secciones, en este orden, texto plano
+en español rioplatense, directo (no JSON):
+
+1. RESUMEN EJECUTIVO — 3-4 líneas: situación general, principal cuello
+   de botella, una fortaleza, la prioridad #1.
+2. SALUD GENERAL DEL SISTEMA — visión del conjunto, no la suma de KPIs.
+3. MAPA DEL FUNNEL — qué etapa (captación/conversión/confirmación/
+   consulta/post-consulta/fidelización/referidos) está mejor y peor.
+4. PRINCIPALES CUELLOS DE BOTELLA — 3 a 5, ordenados por prioridad.
+5. EVIDENCIA — los KPIs y tendencias que sustentan cada cuello.
+6. CAUSAS — separadas en confirmadas, probables, e hipótesis.
+7. CONTRADICCIONES Y DATOS FALTANTES — dónde el dato no alcanza o
+   contradice lo declarado.
+8. OPORTUNIDADES TECNOLÓGICAS — solo de `oportunidades_priorizadas`, con
+   su tipo (proceso/automatización/IA).
+9. PLAN DE ACCIÓN — qué resolver primero y con qué se mide el éxito.
+10. DETALLE DE KPIs — tabla breve de cada KPI relevante, como capa
+    secundaria, no protagonista.
+"""
+
+
+def _payload_clinica(
+    diagnosticos: list,
+    oportunidades_priorizadas: list,
+    calidad_datos,
+    respuestas_diagnostico: dict[str, str],
+    studio_nombre: Optional[str],
+) -> dict:
+    diagnosticos_payload = []
+    for d in diagnosticos:
+        diagnosticos_payload.append({
+            "kpi_id": d.kpi_id,
+            "problema": d.problema,
+            "estado": d.estado,  # EstadoEvidencia(str, Enum): serializa como su propio string
+            "hechos": d.hechos,
+            "anomalias": [dataclasses.asdict(a) for a in d.anomalias],
+            "hipotesis": [dataclasses.asdict(h) for h in d.hipotesis],
+            "contradicciones": [dataclasses.asdict(c) for c in d.contradicciones],
+            "patrones_cruzados": d.patrones_cruzados,
+            "informacion_faltante": d.informacion_faltante,
+            "confianza": d.confianza,
+        })
+
+    oportunidades_payload = []
+    for o in oportunidades_priorizadas:
+        intervencion = o.oportunidad.intervencion
+        oportunidades_payload.append({
+            "kpi_id": o.kpi_id,
+            "score": o.score,
+            "impacto": o.impacto,
+            "addressability": o.oportunidad.addressability,
+            "intervencion": {
+                "nombre": intervencion.nombre,
+                "tipo": intervencion.tipo,
+                "etapa": intervencion.etapa,
+                "metrica_objetivo": intervencion.metrica_objetivo,
+                "condicion": intervencion.condicion,
+                "requiere_compliance": intervencion.requiere_compliance,
+            },
+        })
+
+    return {
+        "studio_nombre": studio_nombre,
+        "contexto_general": construir_contexto_cualitativo(respuestas_diagnostico, kpi_id=None),
+        "diagnosticos": diagnosticos_payload,
+        "oportunidades_priorizadas": oportunidades_payload,
+        "calidad_datos": dataclasses.asdict(calidad_datos) if calidad_datos is not None else None,
+    }
+
+
+def interpretar_clinica(
+    diagnosticos: list,
+    oportunidades_priorizadas: list,
+    calidad_datos=None,
+    respuestas_diagnostico: Optional[dict[str, str]] = None,
+    studio_nombre: Optional[str] = None,
+    client=None,
+) -> dict:
+    """
+    Tercer entry point (Tabla 4 del Documento Maestro): construye el
+    informe jerárquico de 10 secciones a partir de lo que ya calcularon
+    diagnostico.py + catalogo_tecnologico.py + priorizacion.py — nunca
+    recalcula gaps ni redescubre patrones, solo interpreta y redacta.
+
+    `diagnosticos`: lista de `diagnostico.Diagnostico` (ver
+    `diagnostico.diagnosticar`). `oportunidades_priorizadas`: lista de
+    `priorizacion.OportunidadPriorizada` (ver `priorizacion.priorizar_oportunidades`).
+    `calidad_datos`: `calidad.ReporteCalidad` opcional (ver `calidad.evaluar_calidad`).
+
+    Ambos parámetros llegan ya calculados — este módulo no importa
+    diagnostico.py/catalogo_tecnologico.py/priorizacion.py para no crear
+    una cadena de imports más larga de la que ya rompió el ciclo original
+    (ver contexto_cualitativo.py); solo necesita que los objetos tengan
+    los atributos esperados (duck typing vía dataclasses.asdict).
+    """
+    payload = _payload_clinica(
+        diagnosticos, oportunidades_priorizadas, calidad_datos, respuestas_diagnostico or {}, studio_nombre,
+    )
+
+    if client is None:
+        return {"payload_enviado_al_asistente": payload, "informe": None}
+
+    respuesta = client.messages.create(
+        model=MODEL,
+        max_tokens=4000,
+        system=SYSTEM_PROMPT_CLINICA,
+        messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)}],
+    )
+    return {"payload_enviado_al_asistente": payload, "informe": extraer_texto(respuesta)}

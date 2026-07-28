@@ -16,8 +16,10 @@ repite una pregunta que ya se puede inferir de otra parte del embudo.
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from agregados import calcular_agregado
 from schema import KPI_FORMULAS, INTERNAL_VARIABLES, SOLO_MIGRACION_O_SISTEMA, VARIABLE_TYPES
 from preguntas_wizard import obtener_pregunta
+from trazabilidad import Trazabilidad, explicar
 
 
 @dataclass
@@ -34,6 +36,18 @@ class VariableValue:
     # 20 fórmulas de schema.py, que solo conocen `.valor`, no se tocan.
     serie: Optional[dict[str, Any]] = None
     periodo: Optional[str] = None  # etiqueta del período que representa `valor` (ej. "Abril 2026")
+    # Fase 1 (normalización de períodos): `serie` usa claves canónicas
+    # ("2026-04") para que dos archivos que etiquetan el mismo mes distinto
+    # sí intersecten en coverage._calcular_serie_kpi — ver periodos.py.
+    # `etiquetas_originales` guarda {clave_canonica: etiqueta_cruda} para
+    # poder mostrar "Abril 2026" en vez de "2026-04" sin perder la clave
+    # que hace funcionar la intersección.
+    etiquetas_originales: Optional[dict[str, str]] = None
+    # Fase 0 del plan de evolución (lineage): de qué celda(s) salió el
+    # valor, qué agregación y conversión de unidad se aplicaron. Default
+    # None a propósito — variables de wizard, sistema, o extractores que
+    # todavía no la pueblan (vision_parser) siguen funcionando igual.
+    trazabilidad: Optional[Trazabilidad] = None
 
 
 @dataclass
@@ -136,6 +150,7 @@ def evaluar_cobertura(
             resultado.kpis_con_error[kpi.id] = f"{type(e).__name__}: {e}"
             continue
         confianza_min = min(variables[k].confianza for k in requeridas)
+        serie_kpi = _calcular_serie_kpi(kpi, variables, requeridas)
 
         resultado.kpis_calculados[kpi.id] = {
             "nombre": kpi.nombre,
@@ -143,7 +158,20 @@ def evaluar_cobertura(
             "unidad": kpi.unidad,
             "confianza": confianza_min,
             "fuentes": sorted({variables[k].fuente for k in requeridas}),
-            "serie": _calcular_serie_kpi(kpi, variables, requeridas),
+            "serie": serie_kpi,
+            # Fase 1: agregados sobre la serie histórica, al lado de
+            # `valor` — que sigue siendo el último período real (decisión
+            # 2 del plan: no se reintroduce la ambigüedad que cerró el
+            # hallazgo 1.1, el promedio nunca reemplaza al vigente).
+            "agregados": {
+                "promedio": calcular_agregado(serie_kpi, "promedio"),
+                "mediana": calcular_agregado(serie_kpi, "mediana"),
+                "ultimo": calcular_agregado(serie_kpi, "ultimo"),
+            } if serie_kpi else None,
+            # Fase 0 (lineage): de dónde salió cada variable que compone
+            # este KPI — ver trazabilidad.explicar() para el texto legible.
+            "trazabilidad": {k: variables[k].trazabilidad for k in requeridas},
+            "trazabilidad_legible": {k: explicar(variables[k]) for k in requeridas},
         }
         if confianza_min < 0.7:
             resultado.variables_baja_confianza.extend(

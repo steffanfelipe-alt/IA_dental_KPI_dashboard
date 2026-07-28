@@ -45,13 +45,16 @@ confianza que baja si Claude no está seguro del mapeo de una columna.
 
 import json
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import pandas as pd
 
 from schema import KPI_FORMULAS, METRICAS, METRICAS_EXTRAIBLES, VARIABLE_TYPES
 from coverage import VariableValue
 from claude_utils import extraer_texto
+from trazabilidad import Trazabilidad
+from matching import RegistroClientes, encontrar_o_crear_cliente
+import periodos
 
 try:
     import anthropic
@@ -79,7 +82,15 @@ class TasaDeclarada:
 # trae esa estructura, y forzarla producía el hallazgo B (un conteo suelto
 # como "4" terminaba guardado donde se esperaba una lista de tareas). Esas
 # variables se piden en el wizard, no se extraen de Excel.
-VARIABLES_EXCEL = {v: info for v, info in METRICAS_EXTRAIBLES.items() if VARIABLE_TYPES.get(v) != "list"}
+#
+# Tampoco "ledger" (Fase 2, ledger_pacientes): a diferencia de las demás
+# variables, que mapean UNA columna a UNA variable, un ledger necesita
+# varias columnas a la vez (nombre + fecha + monto + tratamiento) resueltas
+# contra matching.py — no encaja en el contrato de mapeo columna-por-
+# columna de este módulo. Se arma con una función aparte (ver
+# `construir_ledger_pacientes` en ledger.py) a partir de filas ya extraídas,
+# no a través del prompt de mapeo semántico de acá.
+VARIABLES_EXCEL = {v: info for v, info in METRICAS_EXTRAIBLES.items() if VARIABLE_TYPES.get(v) not in ("list", "ledger")}
 VARIABLES_DICT = sorted(v for v in VARIABLES_EXCEL if VARIABLE_TYPES.get(v) == "dict")
 
 UNIDADES_DATO_USADAS = sorted({info.unidad_dato for info in VARIABLES_EXCEL.values()})
@@ -157,6 +168,13 @@ Tu trabajo, por cada hoja:
    las filas anteriores en esa columna. Estas filas son muy comunes en
    reportes armados a mano y NUNCA deben tratarse como un período más — si
    las incluís en un promedio, el número final queda inflado.
+
+   Si "orientacion" es "transaccional" y la hoja trae una columna de FECHA
+   por registro (no una etiqueta de mes, una fecha real de cada fila),
+   indicá esa columna también en "columna_periodo" — el código arma con
+   eso una serie histórica agrupando los registros por mes, igual que en
+   periodos_en_filas. Es opcional: si no hay columna de fecha clara, no
+   la indiques y el sistema solo agrega el total.
 
 4. Mapear cada variable a UNA columna (para periodos_en_filas y
    transaccional) o a UNA fila+columna (para metricas_en_filas), del
@@ -385,13 +403,20 @@ def _a_indice_relativo(fila_encabezado: int, fila_raw: Optional[int]) -> Optiona
     return relativo if relativo >= 0 else None
 
 
-def _convertir_unidad(var: str, valor: Any, unidad_origen: Optional[str]) -> Any:
+def _factor_de_conversion(var: str, unidad_origen: Optional[str]) -> Optional[float]:
+    """Factor que `_convertir_unidad` aplicaría, sin aplicarlo — separado
+    para que `aplicar_mapeo` pueda registrar el mismo factor en la
+    Trazabilidad sin duplicar la lógica de qué conversión corresponde."""
     info = METRICAS.get(var)
     if info is None or not unidad_origen or unidad_origen == info.unidad_dato:
-        return valor
-    factor = FACTORES_CONVERSION.get((unidad_origen, info.unidad_dato))
+        return None
+    return FACTORES_CONVERSION.get((unidad_origen, info.unidad_dato))
+
+
+def _convertir_unidad(var: str, valor: Any, unidad_origen: Optional[str]) -> Any:
+    factor = _factor_de_conversion(var, unidad_origen)
     if factor is None:
-        return valor  # unidad no reconocida: no se inventa una conversión
+        return valor  # sin conversión declarada, o unidad no reconocida: no se inventa una
     if isinstance(valor, dict):
         return {k: round(v * factor, 4) if isinstance(v, (int, float)) else v for k, v in valor.items()}
     if isinstance(valor, (int, float)):
@@ -417,6 +442,7 @@ def _agregar_dict(
     idx_categoria: Optional[int],
     columnas_originales: pd.Index,
     agregacion: str,
+    resolver_categoria: Optional[Callable[[str], str]] = None,
 ) -> Optional[dict]:
     """Arma el desglose {categoria: valor} para una variable tipo dict.
 
@@ -424,6 +450,13 @@ def _agregar_dict(
     se devuelve un desglose de una sola clave "total" en vez de un escalar
     suelto — así el valor sigue siendo compatible con lo que esperan las
     fórmulas de schema.py (que siempre iteran sobre .values()).
+
+    `resolver_categoria` (Fase 2, ledger de pacientes): si se pasa, cada
+    valor de la columna categoría pasa por esta función ANTES de agrupar
+    — es el gancho de matching.py para `ingreso_por_paciente`: "Juan
+    Pérez" y "J. Perez" se resuelven al mismo ID antes del groupby, en vez
+    de sumar por separado y subestimar el LTV en silencio. None (default)
+    conserva el comportamiento de siempre: la categoría cruda tal cual.
     """
     valores = pd.to_numeric(df_filtrado[col_valor], errors="coerce")
 
@@ -438,6 +471,8 @@ def _agregar_dict(
         return None
 
     categorias = df_filtrado[col_categoria].astype(str).str.strip()
+    if resolver_categoria is not None:
+        categorias = categorias.map(resolver_categoria)
     agrupado = valores.groupby(categorias)
     if agregacion == "avg":
         resultado = agrupado.mean()
@@ -457,21 +492,47 @@ def _agregar_dict(
 
 def _construir_serie_periodo(
     df_filtrado: pd.DataFrame, col_valor: str, col_periodo: str, agregacion: str,
-) -> Optional[dict]:
-    """{período: valor} para una variable escalar en una hoja
-    periodos_en_filas — la fila TOTAL ya se excluyó antes de llegar acá
-    (ver `aplicar_mapeo`), así que ningún período "fantasma" se cuela."""
+) -> tuple[Optional[dict], dict[str, str]]:
+    """{período_canónico: valor} para una variable escalar en una hoja con
+    columna de período — la fila TOTAL ya se excluyó antes de llegar acá
+    (ver `aplicar_mapeo`), así que ningún período "fantasma" se cuela.
+
+    Fase 1 del plan de evolución: la clave ya no es la etiqueta cruda de la
+    hoja ("Abril 2026") sino la canónica que arma `periodos.normalizar_periodo`
+    ("2026-04") — dos archivos que etiquetan el mismo mes distinto ahora
+    intersectan en `coverage._calcular_serie_kpi`, cosa que antes fallaba
+    en silencio (ver docstring del módulo `periodos.py`). Si una etiqueta no
+    se puede interpretar se conserva tal cual (nunca se inventa un período),
+    y el orden final es cronológico por clave canónica (`orden_cronologico`)
+    en vez de depender del orden de aparición de las filas en el archivo.
+
+    Devuelve (serie, etiquetas_originales): `etiquetas_originales` mapea
+    cada clave canónica a la etiqueta cruda tal como venía en la hoja, para
+    poder mostrarla sin perder la clave que hace intersectar series.
+    """
     valores = pd.to_numeric(df_filtrado[col_valor], errors="coerce")
-    periodos = df_filtrado[col_periodo].astype(str).str.strip()
-    # sort=False: preserva el orden de aparición de las filas (cronológico
-    # en una hoja "un mes por fila"), NO el orden alfabético — pandas
-    # ordena por clave por default, lo que pondría "Abril" antes que
-    # "Enero" y rompería qué período es "el último" (el vigente).
-    agrupado = valores.groupby(periodos, sort=False)
+    periodos_crudos = df_filtrado[col_periodo].astype(str).str.strip()
+    agrupado = valores.groupby(periodos_crudos, sort=False)
     resultado = agrupado.mean() if agregacion == "avg" else agrupado.sum()
     resultado = resultado.dropna()
-    serie = {str(k): round(float(v), 4) for k, v in resultado.items() if str(k) and str(k).lower() != "nan"}
-    return serie or None
+
+    serie: dict[str, float] = {}
+    etiquetas_originales: dict[str, str] = {}
+    for etiqueta_cruda, valor in resultado.items():
+        etiqueta_cruda = str(etiqueta_cruda)
+        if not etiqueta_cruda or etiqueta_cruda.lower() == "nan":
+            continue
+        clave = periodos.normalizar_periodo(etiqueta_cruda) or etiqueta_cruda
+        serie[clave] = round(float(valor), 4)
+        etiquetas_originales[clave] = etiqueta_cruda
+
+    if not serie:
+        return None, {}
+
+    orden = periodos.orden_cronologico(serie.keys())
+    serie_ordenada = {k: serie[k] for k in orden}
+    etiquetas_ordenadas = {k: etiquetas_originales[k] for k in orden}
+    return serie_ordenada, etiquetas_ordenadas
 
 
 def _df_base_y_periodo(df: pd.DataFrame, mapeo_hoja: dict) -> tuple[pd.DataFrame, Optional[str], int]:
@@ -489,8 +550,14 @@ def _df_base_y_periodo(df: pd.DataFrame, mapeo_hoja: dict) -> tuple[pd.DataFrame
     df_base = df.drop(index=list(filas_excluidas)) if filas_excluidas else df
 
     idx_periodo = _a_entero(mapeo_hoja.get("columna_periodo"))
+    # "transaccional" también puede declarar columna_periodo (Fase 1): ahí
+    # es una fecha por registro, no una etiqueta de mes por fila, pero
+    # normalizar_periodo interpreta fechas completas igual de bien — es lo
+    # que habilita armar una serie histórica desde una hoja transaccional
+    # con columna de fecha en vez de descartar esa dimensión.
     col_periodo = df_base.columns[idx_periodo] if (
-        orientacion == "periodos_en_filas" and idx_periodo is not None and idx_periodo < len(df_base.columns)
+        orientacion in ("periodos_en_filas", "transaccional")
+        and idx_periodo is not None and idx_periodo < len(df_base.columns)
     ) else None
 
     return df_base, col_periodo, fila_encabezado
@@ -521,7 +588,7 @@ def extraer_tasas_declaradas(df: pd.DataFrame, mapeo_hoja: dict) -> dict[int, "T
 
         serie = None
         if col_periodo is not None:
-            serie = _construir_serie_periodo(df_base, col, col_periodo, "avg")
+            serie, _etiquetas = _construir_serie_periodo(df_base, col, col_periodo, "avg")
             valor = list(serie.values())[-1] if serie else None
         else:
             no_nulos = valores.dropna()
@@ -567,7 +634,16 @@ def aplicar_mapeo(
     mapeo_hoja: dict,
     variables: Optional[dict[str, VariableValue]] = None,
     formatos_columna: Optional[dict[int, str]] = None,
+    registro_clientes: Optional[RegistroClientes] = None,
 ) -> dict[str, VariableValue]:
+    """`registro_clientes` (Fase 2): si se pasa, las variables tipo dict
+    marcadas `entidad="paciente"` en schema.py (hoy: ingreso_por_paciente)
+    resuelven su columna de categoría contra matching.py antes de agrupar
+    — el mismo RegistroClientes debe pasarse a través de TODOS los
+    archivos de una misma migración para que la identidad de un paciente
+    se reconozca entre hojas y entre archivos, no solo dentro de una hoja.
+    Sin `registro_clientes` (default), el comportamiento es el de
+    siempre: la categoría cruda tal cual, sin matching."""
     variables = dict(variables) if variables else {}
     hoja = mapeo_hoja.get("hoja")
     fuente = f"migracion_excel:{hoja}" if hoja else "migracion_excel"
@@ -579,8 +655,8 @@ def aplicar_mapeo(
         if var is None or var not in VARIABLE_TYPES:
             continue
         tipo_var = VARIABLE_TYPES.get(var)
-        if tipo_var == "list":
-            continue  # excel_parser nunca produce listas — ver VARIABLES_EXCEL
+        if tipo_var in ("list", "ledger"):
+            continue  # excel_parser nunca produce esto por mapeo columna-a-columna — ver VARIABLES_EXCEL
 
         if orientacion == "metricas_en_filas":
             fila_idx = _a_indice_relativo(fila_encabezado, regla.get("fila_index"))
@@ -591,6 +667,7 @@ def aplicar_mapeo(
             df_filtrado = df_base.loc[[fila_idx]]
             agregacion = "sum"  # una sola celda: sum de 1 fila = esa celda
             serie = None
+            etiquetas_originales = None
         else:
             idx = _a_entero(regla.get("columna_index"))
             if idx is None or idx >= len(df_base.columns):
@@ -611,11 +688,23 @@ def aplicar_mapeo(
                     pass  # condición no aplicable con pandas.query, se ignora esa regla puntual
             agregacion = regla.get("agregacion", "sum")
             serie = None
+            etiquetas_originales = None
             if col_periodo is not None and tipo_var in ("int", "float"):
-                serie = _construir_serie_periodo(df_filtrado, col, col_periodo, agregacion)
+                serie, etiquetas_originales = _construir_serie_periodo(df_filtrado, col, col_periodo, agregacion)
 
         if tipo_var == "dict":
-            valor = _agregar_dict(df_filtrado, col, _a_entero(regla.get("columna_categoria_index")), df_base.columns, agregacion)
+            resolver_categoria = None
+            if registro_clientes is not None and getattr(METRICAS.get(var), "entidad", None) == "paciente":
+                # Closure: cada categoria (nombre crudo de la columna) pasa
+                # por matching.py antes de agrupar. mypy/pandas no permite
+                # pasar contexto extra a través de .map(), así que el
+                # registro se captura por clausura en vez de por parámetro.
+                def resolver_categoria(nombre, _registro=registro_clientes):
+                    return encontrar_o_crear_cliente(nombre, _registro).cliente_id
+            valor = _agregar_dict(
+                df_filtrado, col, _a_entero(regla.get("columna_categoria_index")), df_base.columns, agregacion,
+                resolver_categoria=resolver_categoria,
+            )
         elif serie is not None:
             # Con serie disponible, el "valor vigente" es el ÚLTIMO período
             # real de la propia serie (no un promedio de todo el rango) —
@@ -630,9 +719,12 @@ def aplicar_mapeo(
         if valor is None:
             continue
 
-        valor = _convertir_unidad(var, valor, regla.get("unidad_origen"))
+        valor_pre_conversion = valor
+        unidad_origen = regla.get("unidad_origen")
+        factor = _factor_de_conversion(var, unidad_origen)
+        valor = _convertir_unidad(var, valor, unidad_origen)
         if serie is not None:
-            serie = _convertir_unidad(var, serie, regla.get("unidad_origen"))
+            serie = _convertir_unidad(var, serie, unidad_origen)
 
         # Guarda defensiva: nunca guardar un tipo que no coincide con lo
         # que espera VARIABLE_TYPES (ver hallazgo B: la guarda original
@@ -640,9 +732,31 @@ def aplicar_mapeo(
         if isinstance(valor, dict) != (tipo_var == "dict"):
             continue
 
+        # Trazabilidad (Fase 0 del plan de evolución): registra de dónde
+        # salió el valor sin cambiar el valor en sí — un "390 min" queda
+        # explicable como "6.5 horas × 60, hoja X, fila/columna Y" en vez
+        # de un número sin procedencia.
+        traza = Trazabilidad(
+            origen="celda",
+            hoja=hoja,
+            columna=str(col),
+            fila=_a_entero(regla.get("fila_index")) if orientacion == "metricas_en_filas" else None,
+            condicion=regla.get("condicion"),
+            agregacion=agregacion,
+            n_registros=len(df_filtrado) if hasattr(df_filtrado, "__len__") else None,
+            filas_excluidas=list(mapeo_hoja.get("filas_excluidas") or []),
+            unidad_origen=unidad_origen,
+            unidad_final=METRICAS[var].unidad_dato if var in METRICAS else None,
+            factor_conversion=factor,
+            valor_pre_conversion=valor_pre_conversion if factor is not None else None,
+            valor_final=valor,
+        )
+
         nueva = VariableValue(
             valor=valor, fuente=fuente, confianza=regla.get("confianza", 0.8),
             serie=serie, periodo=(list(serie.keys())[-1] if serie else None),
+            etiquetas_originales=etiquetas_originales,
+            trazabilidad=traza,
         )
         existente = variables.get(var)
         if existente is None or nueva.confianza > existente.confianza:
@@ -653,9 +767,15 @@ def aplicar_mapeo(
 
 def parsear_excel(
     path: str, client: Optional["anthropic.Anthropic"] = None,
+    registro_clientes: Optional[RegistroClientes] = None,
 ) -> tuple[dict[str, VariableValue], dict[int, TasaDeclarada]]:
     """Devuelve (variables, tasas_declaradas) — ver reconciliacion.py para
-    qué hace pipeline.py con el segundo elemento."""
+    qué hace pipeline.py con el segundo elemento.
+
+    `registro_clientes` (Fase 2): pasar el MISMO RegistroClientes a través
+    de todos los archivos de una migración (ver pipeline.procesar_migracion)
+    para que "Juan Pérez" en un archivo y "J. Perez" en otro resuelvan al
+    mismo paciente en vez de crear dos identidades distintas."""
     if client is None:
         assert anthropic is not None, "Instalar el SDK: pip install anthropic --break-system-packages"
         client = anthropic.Anthropic()
@@ -671,7 +791,7 @@ def parsear_excel(
             continue
         df = _releer_con_encabezado(path, mapeo_hoja.get("hoja"), mapeo_hoja["fila_encabezado"])
         formatos = formatos_por_hoja.get(mapeo_hoja.get("hoja")) or {}
-        variables = aplicar_mapeo(df, mapeo_hoja, variables, formatos_columna=formatos)
+        variables = aplicar_mapeo(df, mapeo_hoja, variables, formatos_columna=formatos, registro_clientes=registro_clientes)
         # Las tasas declaradas NO pasan por la guarda de formato: ahí un
         # formato % es justamente lo correcto y esperado.
         tasas_declaradas.update(extraer_tasas_declaradas(df, mapeo_hoja))

@@ -85,8 +85,39 @@ def test_serie_periodo_excluye_fila_total_y_usa_ultimo_como_vigente():
     variables = aplicar_mapeo(df, mapeo)
     vv = variables["consultas_nuevas_mes"]
     assert vv.valor == 102, f"esperaba el último mes real (102), no algo inflado por TOTAL: {vv.valor}"
-    assert vv.serie == {"Enero 2026": 95.0, "Febrero 2026": 88.0, "Marzo 2026": 110.0, "Abril 2026": 102.0}
-    assert vv.periodo == "Abril 2026"
+    # Fase 1: la serie usa clave canónica ("2026-04"), no la etiqueta cruda
+    # de la hoja — es lo que permite que dos archivos con etiquetas
+    # distintas del mismo mes intersecten en coverage._calcular_serie_kpi.
+    assert vv.serie == {"2026-01": 95.0, "2026-02": 88.0, "2026-03": 110.0, "2026-04": 102.0}
+    assert vv.periodo == "2026-04"
+    # La etiqueta cruda no se pierde, queda disponible para mostrar.
+    assert vv.etiquetas_originales == {
+        "2026-01": "Enero 2026", "2026-02": "Febrero 2026",
+        "2026-03": "Marzo 2026", "2026-04": "Abril 2026",
+    }
+
+
+def test_serie_normaliza_etiquetas_de_archivos_distintos_al_mismo_mes():
+    # El hueco real que motivó la Fase 1: un archivo etiqueta el mes
+    # "Abril 2026" y otro "2026-04" — sin normalizar, estas dos series NO
+    # intersectarían nunca en coverage._calcular_serie_kpi.
+    df_texto = pd.DataFrame({"mes": ["Marzo 2026", "Abril 2026"], "turnos": [79, 73]})
+    mapeo_texto = {
+        "hoja": "ConsultorioA", "fila_encabezado": 0,
+        "orientacion": "periodos_en_filas", "columna_periodo": 0,
+        "mapeo": [{"columna_index": 1, "variable": "turnos_agendados", "agregacion": "sum", "confianza": 0.9}],
+    }
+    df_iso = pd.DataFrame({"periodo": ["2026-03", "2026-04"], "no_shows": [12, 16]})
+    mapeo_iso = {
+        "hoja": "ConsultorioB", "fila_encabezado": 0,
+        "orientacion": "periodos_en_filas", "columna_periodo": 0,
+        "mapeo": [{"columna_index": 1, "variable": "no_shows", "agregacion": "sum", "confianza": 0.9}],
+    }
+    variables = aplicar_mapeo(df_texto, mapeo_texto)
+    variables = aplicar_mapeo(df_iso, mapeo_iso, variables)
+
+    assert set(variables["turnos_agendados"].serie) == {"2026-03", "2026-04"}
+    assert set(variables["no_shows"].serie) == {"2026-03", "2026-04"}
 
 
 def test_metricas_en_filas_no_mezcla_metricas_distintas():
@@ -203,6 +234,54 @@ def test_leer_formatos_del_fixture_real():
 def test_leer_formatos_de_csv_devuelve_vacio():
     from extractors.excel_parser import leer_formatos_columna
     assert leer_formatos_columna("cualquier_cosa.csv") == {}
+
+
+def test_ingreso_por_paciente_fusiona_variantes_del_mismo_nombre_via_matching():
+    # El bug real del doc de deficiencias (punto 3): sin matching, "Juan
+    # Perez" y "J. Perez" quedan como dos claves del dict y KPI 14 (LTV)
+    # se subestima en silencio.
+    from matching import RegistroClientes
+
+    df = pd.DataFrame({
+        "paciente": ["Juan Perez", "J. Perez", "Juan Perez"],
+        "monto": [50000, 30000, 20000],
+    })
+    mapeo = _mapeo_hoja([
+        {"columna_index": 1, "variable": "ingreso_por_paciente", "agregacion": "sum",
+         "columna_categoria_index": 0, "confianza": 0.9},
+    ])
+    variables = aplicar_mapeo(df, mapeo, registro_clientes=RegistroClientes())
+    valor = variables["ingreso_por_paciente"].valor
+    assert len(valor) == 1, f"las 3 filas deberían resolver a un solo paciente, dio {valor!r}"
+    assert list(valor.values())[0] == 100000.0
+
+
+def test_sin_registro_clientes_ingreso_por_paciente_se_comporta_como_antes():
+    # Nadie pasa registro_clientes (default None): mismo comportamiento
+    # de siempre, categoría cruda tal cual — sin romper compatibilidad.
+    df = pd.DataFrame({"paciente": ["Juan Perez", "J. Perez"], "monto": [50000, 30000]})
+    mapeo = _mapeo_hoja([
+        {"columna_index": 1, "variable": "ingreso_por_paciente", "agregacion": "sum",
+         "columna_categoria_index": 0, "confianza": 0.9},
+    ])
+    variables = aplicar_mapeo(df, mapeo)
+    assert len(variables["ingreso_por_paciente"].valor) == 2
+
+
+def test_ingreso_por_tratamiento_nunca_pasa_por_matching_de_pacientes():
+    # Guarda crítica (schema.MetricaInfo.entidad): ingreso_por_tratamiento
+    # comparte _agregar_dict con ingreso_por_paciente, pero su entidad es
+    # "tratamiento" — no debe fusionar tratamientos como si fueran
+    # pacientes aunque se pase un registro_clientes.
+    from matching import RegistroClientes
+
+    df = pd.DataFrame({"tratamiento": ["Ortodoncia", "Ortodoncia (plan completo)"], "monto": [1000, 2000]})
+    mapeo = _mapeo_hoja([
+        {"columna_index": 1, "variable": "ingreso_por_tratamiento", "agregacion": "sum",
+         "columna_categoria_index": 0, "confianza": 0.9},
+    ])
+    variables = aplicar_mapeo(df, mapeo, registro_clientes=RegistroClientes())
+    assert len(variables["ingreso_por_tratamiento"].valor) == 2
 
 
 if __name__ == "__main__":

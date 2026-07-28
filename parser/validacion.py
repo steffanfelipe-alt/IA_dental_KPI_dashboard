@@ -40,6 +40,15 @@ def validar_tipo(var: str, valor: Any) -> Optional[str]:
         return None if isinstance(valor, dict) else f"se esperaba dict, llegó {type(valor).__name__}"
     if tipo == "list":
         return None if isinstance(valor, list) else f"se esperaba list, llegó {type(valor).__name__}"
+    if tipo == "ledger":
+        # {paciente_id: [eventos]} — un dict cuyos valores son listas
+        # (de eventos), no un dict plano {categoria: número} como
+        # ingreso_por_paciente. Fase 2 (matching.py + metricas_paciente.py).
+        if not isinstance(valor, dict):
+            return f"se esperaba ledger (dict de listas), llegó {type(valor).__name__}"
+        if not all(isinstance(v, list) for v in valor.values()):
+            return "se esperaba un ledger {paciente_id: [eventos]} — algún valor no es una lista"
+        return None
     if tipo in ("int", "float"):
         if isinstance(valor, bool) or not isinstance(valor, (int, float)):
             return f"se esperaba número, llegó {type(valor).__name__}"

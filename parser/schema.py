@@ -34,6 +34,16 @@ class MetricaInfo:
     unidad_dato: str              # unidad que debe tener el NÚMERO extraído
     sinonimos: list[str] = field(default_factory=list)
     no_confundir_con: str = ""
+    # Fase 2 (matching.py): qué tipo de entidad identifica la clave de un
+    # desglose {categoria: valor}. "paciente" -> la clave pasa por
+    # resolución de identidad (matching.resolver_lote) antes de agrupar.
+    # None (default) -> la clave se usa tal cual, sin matching. CRÍTICO:
+    # ingreso_por_tratamiento y costo_por_tratamiento comparten la misma
+    # función de agregación (_agregar_dict) que ingreso_por_paciente — sin
+    # este flag en None para ellas, el matching de personas fusionaría
+    # "Ortodoncia (plan completo)" con "Ortodoncia" como si fueran la
+    # misma entidad.
+    entidad: Optional[str] = None  # "paciente" | "tratamiento" | None
 
 
 # ---------------------------------------------------------------------------
@@ -75,9 +85,33 @@ VARIABLE_TYPES = {
 
     # --- Operativas ---
     "horas_sillon_ocupadas": "float",
+    # Fase 1 del plan de evolución: sin esto, KPI 12 (producción por
+    # hora-sillón) no tiene denominador para una tasa de OCUPACIÓN — solo
+    # mide $/hora trabajada, no cuánta hora-sillón queda ociosa. La pide el
+    # catálogo tecnológico (reprogramación automática, lista de espera):
+    # su métrica objetivo es "hora-sillón ociosa", que hoy no existe.
+    "horas_sillon_disponibles": "float",
     "tiempo_respuesta_promedio_min": "float",
+    # Dos variables de tiempo de respuesta más, pedidas por el catálogo
+    # tecnológico (triage de urgencias, monitoreo de reseñas negativas):
+    # son momentos del embudo distintos entre sí y distintos de
+    # tiempo_respuesta_promedio_min (que es SOLO primera respuesta a un
+    # lead nuevo) — confundirlas repetiría el error de mapeo que ya
+    # documentó el hallazgo 1.3 (ver `no_confundir_con` de cada una).
+    "tiempo_respuesta_urgencias_min": "float",
+    "tiempo_respuesta_reclamos_min": "float",
     "horas_tarea_manual_semana": "dict",   # {tarea: horas/semana}
     "tareas_sin_backup": "list",           # [{tarea, responsable}, ...]
+
+    # --- Historial por paciente (Fase 2 — matching.py + metricas_paciente.py) ---
+    # {paciente_id: [{fecha, tipo_evento, monto, tratamiento}, ...]}. Nunca
+    # se pide en el wizard (SOLO_MIGRACION_O_SISTEMA más abajo): se arma a
+    # partir de una hoja transaccional con nombre + fecha por registro, una
+    # vez que el nombre pasó por matching.resolver_lote. No es parte de
+    # las 20 fórmulas de KPI_FORMULAS (ver metricas_paciente.py) — es un
+    # insumo aparte para las métricas de riesgo/fuga, valor/concentración,
+    # ciclo de vida y atribución que la identidad de paciente desbloquea.
+    "ledger_pacientes": "ledger",
 
     # --- Internas (no vienen de migración ni wizard, las calcula el sistema) ---
     "automatizaciones_activas": "int",
@@ -256,18 +290,21 @@ METRICAS: dict[str, MetricaInfo] = {
         "Ingreso por paciente",
         "Desglose {paciente: monto histórico total} — cuánto generó cada paciente a lo largo del tiempo, no en un solo período.",
         "monto_ars",
+        entidad="paciente",
     ),
     "ingreso_por_tratamiento": MetricaInfo(
         "Ingreso por tipo de tratamiento",
         "Desglose {tipo_de_tratamiento: ingreso total}. En un CSV transaccional, agrupar el monto por la columna de tratamiento.",
         "monto_ars",
         no_confundir_con="costo_por_tratamiento (eso es lo que CUESTA el insumo, no lo que ingresa)",
+        entidad="tratamiento",  # explícito: NUNCA pasa por matching de pacientes
     ),
     "costo_por_tratamiento": MetricaInfo(
         "Costo por tipo de tratamiento",
         "Desglose {tipo_de_tratamiento: costo de insumos}. Es un COSTO, no un ingreso.",
         "monto_ars",
         no_confundir_con="ingreso_por_tratamiento (eso es lo que se cobra, no lo que cuesta)",
+        entidad="tratamiento",  # explícito: NUNCA pasa por matching de pacientes
     ),
     "costo_hora_sillon": MetricaInfo(
         "Costo por hora-sillón",
@@ -283,6 +320,14 @@ METRICAS: dict[str, MetricaInfo] = {
         "Horas-sillón ocupadas",
         "Total de horas de sillón efectivamente ocupadas (con paciente) en el período.",
         "horas",
+        no_confundir_con="horas_sillon_disponibles (esa es la capacidad total, esta es solo lo efectivamente ocupado)",
+    ),
+    "horas_sillon_disponibles": MetricaInfo(
+        "Horas-sillón disponibles",
+        "Capacidad total de horas de sillón en el período (sillones × horas de atención), "
+        "esté ocupado o no. Junto con horas_sillon_ocupadas da la tasa de ocupación real.",
+        "horas",
+        no_confundir_con="horas_sillon_ocupadas (esa es solo lo efectivamente ocupado, esta es la capacidad total)",
     ),
     "tiempo_respuesta_promedio_min": MetricaInfo(
         "Tiempo de 1ª respuesta",
@@ -291,9 +336,34 @@ METRICAS: dict[str, MetricaInfo] = {
         "minutos",
         no_confundir_con=(
             "cuánto tarda un PACIENTE en aceptar/rechazar un presupuesto ya "
-            "enviado — eso es otro dato (dias_hasta_respuesta de un "
-            "presupuesto), no esta variable. Si la fuente da el dato en "
+            "enviado (eso es otro dato, dias_hasta_respuesta de un "
+            "presupuesto); ni tiempo_respuesta_urgencias_min (consulta post-"
+            "tratamiento que el triage clasifica como urgente, no un lead "
+            "nuevo); ni tiempo_respuesta_reclamos_min (una queja o reseña "
+            "negativa, no un primer contacto). Si la fuente da el dato en "
             "horas o días, hay que convertirlo a minutos."
+        ),
+    ),
+    "tiempo_respuesta_urgencias_min": MetricaInfo(
+        "Tiempo de respuesta a urgencias",
+        "Cuánto tarda la clínica en responder a una consulta post-tratamiento "
+        "que el asistente de triage clasificó como urgente (dolor, sangrado, "
+        "complicación), en MINUTOS. Es un momento del embudo distinto al "
+        "primer contacto de un lead nuevo.",
+        "minutos",
+        no_confundir_con=(
+            "tiempo_respuesta_promedio_min (esa es primera respuesta a un "
+            "LEAD NUEVO, no a un paciente ya tratado con una urgencia)"
+        ),
+    ),
+    "tiempo_respuesta_reclamos_min": MetricaInfo(
+        "Tiempo de respuesta a reclamos",
+        "Cuánto tarda la clínica en responder a un reclamo o reseña negativa "
+        "del paciente, en MINUTOS.",
+        "minutos",
+        no_confundir_con=(
+            "tiempo_respuesta_promedio_min (lead nuevo) ni "
+            "tiempo_respuesta_urgencias_min (urgencia clínica, no una queja)"
         ),
     ),
     "horas_tarea_manual_semana": MetricaInfo(
@@ -317,6 +387,17 @@ METRICAS: dict[str, MetricaInfo] = {
         "mapear la variable que inventar nombres de tarea.",
         "lista_de_tareas",
         no_confundir_con="horas_tarea_manual_semana (esa es horas, no una lista de qué tareas)",
+    ),
+    "ledger_pacientes": MetricaInfo(
+        "Historial de eventos por paciente",
+        "Desglose {paciente_id: [eventos]} — cada evento con fecha, tipo "
+        "(turno/no_show/presupuesto/pago/tratamiento), monto y tratamiento "
+        "cuando aplique. El paciente ya está resuelto a un ID estable (ver "
+        "matching.py), no es el nombre crudo. Se arma desde una hoja "
+        "transaccional con nombre + fecha por registro, nunca se pregunta "
+        "en el wizard.",
+        "ledger",
+        entidad="paciente",
     ),
 }
 

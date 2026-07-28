@@ -43,6 +43,7 @@ from typing import Optional
 from coverage import VariableValue
 from reconciliacion import FUENTE_DERIVADA
 from schema import KPI_BY_ID, VARIABLE_TYPES
+from trazabilidad import Trazabilidad
 from validacion import validar_variable
 
 CONFIANZA_DERIVADA = 0.6  # < 0.7: cae en "a confirmar", nunca se presenta como dato duro
@@ -103,6 +104,17 @@ def derivar_variables_faltantes(
             continue
 
         serie = _derivar_serie(vv_den.serie, getattr(tasa, "serie", None), num)
+        tasa_vigente = tasa.vigente
+
+        traza = Trazabilidad(
+            origen="derivado_de_tasa",
+            unidad_origen=den,
+            unidad_final=VARIABLE_TYPES.get(num),
+            factor_conversion=round(tasa_vigente / 100, 4),
+            valor_pre_conversion=vv_den.valor,
+            valor_final=valor,
+            detalle=f"despejado de {den}={vv_den.valor!r} × tasa declarada {tasa_vigente}% del KPI {kpi_id}",
+        )
 
         nuevas[num] = VariableValue(
             valor=valor,
@@ -111,6 +123,7 @@ def derivar_variables_faltantes(
             archivo_origen=vv_den.archivo_origen,
             serie=serie,
             periodo=(list(serie.keys())[-1] if serie else vv_den.periodo),
+            trazabilidad=traza,
         )
         derivaciones.append(Derivacion(
             variable=num, kpi_id=kpi_id, valor=valor,

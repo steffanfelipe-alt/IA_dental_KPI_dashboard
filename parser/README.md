@@ -22,6 +22,21 @@ interpretacion.py            Cruza gap + contexto cualitativo -> interpretación
 priorizacion.py              Motor de priorización: score = gap × impacto × factor_confiabilidad
 referencias/
   benchmarks_research_AR.md  Research completo de benchmarks (fuente de benchmarks.py)
+
+trazabilidad.py               Lineage: de qué celda/fórmula salió cada valor (ver explicar())
+periodos.py                   Normaliza etiquetas de período a clave canónica ("2026-04")
+agregados.py                  Promedio/mediana/suma sobre una serie ya extraída + detección de outliers
+matching.py                   Resolución de identidad de pacientes (fuzzy matching + banda gris)
+ledger.py                     Arma ledger_pacientes a partir de registros transaccionales ya extraídos
+metricas_paciente.py          17 métricas de riesgo/valor/ciclo de vida/atribución sobre el ledger
+calidad.py                    Data Quality Report: completitud/consistencia/confianza + suficiencia_datos
+contexto_cualitativo.py       Preguntas cualitativas por KPI (extraído de interpretacion.py)
+estacionalidad.py             Estacionalidad de Mar del Plata como dato estructurado (proxy sobre P51)
+diagnostico.py                Diagnostic Engine: estado de evidencia, patrones cruzados, contradicciones
+catalogo_tecnologico.py       ~35 intervenciones reales de Agencia IA, indexadas por etapa del funnel
+evals/
+  casos_diagnostico.py        Casos sintéticos para el Diagnostic Engine (ver nota de scope, §24)
+  runner_diagnostico.py       Precisión de cuello de botella, falsos diagnósticos, % accionables
 ```
 
 ## Uso desde el endpoint de FastAPI
@@ -196,6 +211,115 @@ rankear por encima de un gap mediano contra un dato oficial.
   verbal. Es normal que queden vacíos hasta que la clínica cargue sus
   primeras facturas; comunicarlo así en el panel de resultados.
 
+## Trazabilidad, períodos e identidad de pacientes (Fases 0-2)
+
+- **`trazabilidad.py`**: cada `VariableValue` puede traer un
+  `Trazabilidad` opcional (celda/fila/columna, agregación, conversión de
+  unidad aplicada). `trazabilidad.explicar(vv)` da el texto legible — un
+  "390 min" deja de ser un número sin origen y pasa a ser "6.5 horas × 60
+  (hoja Operativo, fila 3)". `kpis_calculados` en el payload de
+  `pipeline.procesar_migracion` ya incluye `trazabilidad_legible` por
+  variable.
+- **`periodos.py`**: dos archivos que etiquetan el mismo mes distinto
+  ("Abril 2026" vs "2026-04") ahora intersectan en
+  `coverage._calcular_serie_kpi` — antes esa serie se caía a `None` en
+  silencio. `VariableValue.etiquetas_originales` conserva la etiqueta
+  cruda para mostrar sin perder la clave canónica.
+- **`agregados.py`**: `kpis_calculados[id]["agregados"]` trae
+  promedio/mediana/último al lado de `"valor"` (que sigue siendo el
+  período vigente — el promedio nunca lo reemplaza).
+- **`matching.py`**: resuelve "Juan Pérez" / "J. Perez" / "Juan Pérez
+  Gómez" al mismo paciente. Usa `rapidfuzz` si está instalada (con
+  fallback a `difflib`), pero un solo fuzzy score no alcanza — ver el
+  docstring del módulo para el hallazgo real ("Juan Perez" vs "Juana
+  Perez" da ~95% de similitud y son personas distintas) y por qué la
+  decisión de fusión depende también de si el nombre de pila es
+  compatible, no solo del score. Los casos de zona gris nunca se
+  fusionan solos: aparecen en `conflictos_pendientes` (variable
+  `"identidad_paciente"`) para que el dueño confirme.
+- **`ledger.py` + `metricas_paciente.py`**: `ledger_pacientes`
+  (`{paciente_id: [eventos]}`) es el insumo de 17 métricas que las 20
+  fórmulas de `schema.py` no pueden expresar (no-show recurrente por
+  paciente, LTV real, concentración de ingresos, retención por cohorte,
+  etc. — ver el docstring de `metricas_paciente.py` para la lista
+  completa). **Importante**: hoy ningún extractor en vivo arma
+  `ledger_pacientes` automáticamente desde una hoja real — eso requiere
+  extender el contrato del `SYSTEM_PROMPT` de `excel_parser.py` para que
+  Claude identifique columnas de nombre+fecha+tipo en una hoja
+  transaccional, cambio que necesita validarse contra la API real antes
+  de confiar en él. `construir_ledger_pacientes` ya está listo para
+  cuando esa extracción se conecte; mientras tanto, `_agregar_dict` SÍ
+  está enganchado al matching real para `ingreso_por_paciente` (pasando
+  `registro_clientes` a `aplicar_mapeo`), que es lo que corrige el LTV
+  subestimado del punto 3 del informe de deficiencias sin depender de
+  ese contrato nuevo.
+
+## Diagnostic Engine (Fase 4)
+
+`diagnostico.py` se inserta entre `priorizacion.py` e `interpretacion.py`:
+estructura qué sabe el sistema (`EstadoEvidencia`: HEALTHY/NORMAL/WATCH/
+PROBLEM/CRITICAL/INSUFFICIENT_EVIDENCE), qué patrones cruzados detecta
+entre KPIs (`PATRONES_CRUZADOS` — ya no viven como prosa en el prompt) y
+qué contradicciones encuentra entre lo que el dueño declaró y lo que los
+datos muestran (`detectar_contradicciones`). Es 100% determinista, no
+llama a Claude — `interpretacion.interpretar_kpi`/`interpretar_panel`
+aceptan un `diagnostico` opcional que viaja en el payload como hechos ya
+verificados, no como algo que el modelo tiene que re-derivar.
+
+`construir_contexto_cualitativo` y las tablas de preguntas por KPI se
+movieron a `contexto_cualitativo.py` (antes vivían en `interpretacion.py`)
+para romper el import circular con `diagnostico.py`, que también las
+necesita — `interpretacion.py` las sigue re-exportando, nada que la
+importaba desde ahí se rompió.
+
+## Catálogo tecnológico y priorización extendida (Fases 5-6)
+
+`catalogo_tecnologico.py` mapea cada diagnóstico a intervenciones reales
+del catálogo de Agencia IA (~35, en 7 etapas de funnel: Captación →
+Conversión → Confirmación → Consulta → Post-consulta → Fidelización →
+Referidos), incluyendo 3 alternativas de **proceso** (no solo tecnología,
+ver §14 del Documento Maestro) y `calcular_addressability` (¿esta
+intervención es entregable dado lo que la clínica ya tiene integrado?).
+
+`priorizacion.calcular_score` ahora acepta `addressability` y
+`suficiencia` (default 1.0, no rompe ninguna llamada existente) — un
+problema grande pero sin intervención entregable o medido con una
+variable derivada no debería rankear por encima de uno con camino de
+solución claro y datos observados. `priorizar_oportunidades` cablea todo
+`diagnostico.py` → `catalogo_tecnologico.py` → `priorizacion.py`, y
+`pipeline.procesar_migracion` lo ejecuta automáticamente si se le pasa
+`respuestas_diagnostico` (opcional — sin eso, `"diagnostico"` y
+`"oportunidades_priorizadas"` quedan en `None`, comportamiento idéntico
+al de antes de estas fases).
+
+**Pendiente de tu input** (no bloquea nada, pero está sin completar):
+`Intervencion.periodo_evaluacion_semanas` queda en `None` en las ~35
+intervenciones — cuántas semanas darle a cada una antes de medir si movió
+el KPI no es inventable. Y "reputación" (pedido de reseña) sigue
+aproximado con KPI 10 en vez de tener variable propia — el catálogo mismo
+lo marca como no mapeado 1:1.
+
+## interpretar_clinica y evals del Diagnostic Engine (Fases 7-8)
+
+`interpretacion.interpretar_clinica` es el tercer entry point (junto a
+`interpretar_kpi` e `interpretar_panel`): arma el informe jerárquico de 10
+secciones (resumen ejecutivo → mapa del funnel → cuellos de botella →
+evidencia → causas → contradicciones → oportunidades tecnológicas → plan
+de acción → detalle de KPIs) a partir de lo que ya calcularon
+`diagnostico.py` + `catalogo_tecnologico.py` + `priorizacion.py`. El
+`SYSTEM_PROMPT_CLINICA` le pide explícitamente a Claude que NO recalcule
+gaps ni reinvente patrones — que los repita y explique.
+
+`evals/runner_diagnostico.py` corre el motor determinista completo contra
+casos sintéticos (`evals/casos_diagnostico.py`) y reporta precisión de
+cuello de botella, tasa de falsos diagnósticos, y % de recomendaciones
+accionables. **Importante**: son casos sintéticos, no la validación real
+que pide el §24 del Documento Maestro (casos reales anonimizados +
+diagnóstico de un experto humano) — eso es un proceso que requiere datos
+de clínicas reales y un experto disponible, ninguno de los dos existía en
+esta sesión. `test_evals_diagnostico.py` corre los mismos casos como
+parte de la suite de regresión (es 100% determinista, no llama a Claude).
+
 ## Pendiente
 
 - ~~Reemplazar el placeholder `"claude-sonnet-4-6"` por el string de modelo
@@ -220,3 +344,25 @@ rankear por encima de un gap mediano contra un dato oficial.
   Anthropic que el criterio "mismo valor, contextos opuestos -> distinta
   interpretación" se sostiene en la salida del modelo, no solo en el
   payload que se le manda.
+- **Extraer `ledger_pacientes` en vivo desde una hoja transaccional real**:
+  extender el `SYSTEM_PROMPT` de `excel_parser.py` para que Claude
+  identifique columnas de nombre/fecha/tipo/monto/tratamiento en una hoja
+  transaccional, y validar ese cambio de contrato contra la API real
+  (evals nuevos, no solo los deterministas). Hoy `ledger.py` y
+  `metricas_paciente.py` están completos y probados, pero alimentados a
+  mano — nada en el pipeline arma el ledger todavía desde un archivo real.
+- Nueva dependencia: **`rapidfuzz`** (matching.py). El venv del proyecto
+  no traía `pip` funcionando — hubo que arrancarlo con
+  `python3 -m ensurepip --upgrade` antes de poder instalarla. No hay
+  `requirements.txt` en el repo; si se agrega uno, `rapidfuzz` tiene que
+  quedar ahí.
+- **Validación real del Diagnostic Engine (§24 del Documento Maestro)**:
+  hoy solo hay casos sintéticos (`evals/casos_diagnostico.py`). Falta el
+  circuito real — casos anonimizados de clínicas reales, diagnóstico de
+  un experto humano, comparación, y ajuste de reglas/benchmarks/prompt
+  según esa comparación — antes de confiar en el motor en producción.
+- **`Intervencion.periodo_evaluacion_semanas`** queda en `None` en las
+  ~35 intervenciones del catálogo — pendiente de confirmar con el usuario
+  cuántas semanas darle a cada una antes de medir impacto.
+- **"Reputación"** (pedido de reseña) sigue aproximado con KPI 10 en vez
+  de tener variable propia — pendiente de decisión.

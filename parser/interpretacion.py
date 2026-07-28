@@ -36,6 +36,7 @@ from typing import Optional
 
 from schema import KPI_BY_ID
 from benchmarks import calcular_gap, Gap
+from claude_utils import extraer_texto
 
 try:
     import anthropic
@@ -219,7 +220,7 @@ def interpretar_kpi(
         system=SYSTEM_PROMPT_BASE,
         messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)}],
     )
-    return {"payload_enviado_al_asistente": payload, "interpretacion": respuesta.content[0].text}
+    return {"payload_enviado_al_asistente": payload, "interpretacion": extraer_texto(respuesta)}
 
 
 def _gap_a_dict(gap: Gap) -> dict:

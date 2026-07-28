@@ -19,6 +19,7 @@ from typing import Optional
 
 from schema import VARIABLE_TYPES
 from coverage import VariableValue
+from claude_utils import extraer_texto
 
 try:
     import anthropic
@@ -34,6 +35,14 @@ impresa, o captura de pantalla de otro sistema). Extraé todos los datos que
 puedas y mapealos a estas variables:
 
 {json.dumps(list(VARIABLE_TYPES.keys()), ensure_ascii=False, indent=2)}
+
+Aclaración sobre una variable fácil de confundir:
+- "tiempo_respuesta_promedio_min" es cuánto tarda LA CLÍNICA en responder
+  a una consulta/lead NUEVO (primer contacto), en MINUTOS. NO es cuánto
+  tarda un paciente en aceptar o rechazar un presupuesto ya enviado — eso
+  no tiene variable en este vocabulario todavía; si ves un dato así, no lo
+  mapees acá. Si la fuente da el dato en otra unidad, convertí el valor a
+  minutos antes de reportarlo.
 
 Reglas:
 - Si la imagen es una tabla de turnos con columna de asistencia, contá
@@ -87,7 +96,7 @@ def parsear_imagen(path: str, client: Optional["anthropic.Anthropic"] = None) ->
         }],
     )
 
-    texto = respuesta.content[0].text.strip()
+    texto = extraer_texto(respuesta).strip()
     if texto.startswith("```"):
         texto = texto.split("```")[1].removeprefix("json").strip()
     payload = json.loads(texto)
@@ -133,7 +142,7 @@ def parsear_pdf(path: str, client: Optional["anthropic.Anthropic"] = None) -> di
         }],
     )
 
-    texto = respuesta.content[0].text.strip()
+    texto = extraer_texto(respuesta).strip()
     if texto.startswith("```"):
         texto = texto.split("```")[1].removeprefix("json").strip()
     payload = json.loads(texto)

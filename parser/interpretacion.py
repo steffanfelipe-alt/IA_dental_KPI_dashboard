@@ -37,6 +37,7 @@ from typing import Optional
 from schema import KPI_BY_ID
 from benchmarks import calcular_gap, Gap
 from claude_utils import extraer_texto
+from formato import fmt_por_unidad
 
 try:
     import anthropic
@@ -114,6 +115,24 @@ def peso_benchmark_vs_historial(semanas_de_datos_propios: int) -> dict:
         return {"benchmark": 0.2, "historial": 0.8}   # ya tiene su propia línea base: manda lo propio
 
 
+SEMANAS_POR_PERIODO_MENSUAL = 4.33  # mismo factor que schema._horas_liberadas
+
+
+def semanas_desde_serie(serie: Optional[dict]) -> int:
+    """
+    Aproxima cuántas semanas de datos propios representa una serie de
+    períodos mensuales (mismo supuesto de 4.33 semanas/mes que ya usa
+    `schema._horas_liberadas`). Antes de esto, todo llamador dejaba
+    `semanas_de_datos_propios` en 0 por defecto — la ponderación siempre
+    terminaba apoyándose al máximo en el benchmark externo (débil en 11
+    de 13 KPIs) aunque la clínica ya tuviera meses de historial propio
+    (hallazgo 4 del informe de deficiencias).
+    """
+    if not serie:
+        return 0
+    return round(len(serie) * SEMANAS_POR_PERIODO_MENSUAL)
+
+
 SYSTEM_PROMPT_BASE = """Sos el asistente de diagnóstico de Agencia IA para
 clínicas dentales en Argentina. Tu trabajo NO es leer un número de gap en
 voz alta — es explicar qué significa ese número dado el contexto real de
@@ -166,9 +185,23 @@ Reglas de razonamiento:
    interpretación según esos números: con `ponderacion.benchmark` alto
    (clínica recién arrancando), apoyate más en "comparado con la
    referencia (débil todavía)..."; con `ponderacion.historial` alto
-   (clínica con línea base propia), apoyate más en la `serie_historica`
-   del payload: "tu propia tendencia: pasaste de X a Y, mejorando o
-   empeorando" — la referencia externa pasa a segundo plano.
+   (clínica con línea base propia), apoyate más en la
+   `serie_historica_propia` del payload: "tu propia tendencia: pasaste de
+   X a Y, mejorando o empeorando" — la referencia externa pasa a segundo
+   plano.
+
+8. Razonamiento cruzado entre KPIs (solo si el payload trae `kpis`, plural
+   — ver `interpretar_panel`): un KPI aislado fuera de rango no siempre es
+   el problema en sí, puede ser el efecto de otro. Ejemplos: aceptación de
+   presupuestos alta pero ticket promedio bajo → probable problema de mix
+   de tratamientos, no de cómo se cierra la venta. Tasa de agendamiento
+   alta pero no-show también alto → se está agendando gente que no está
+   realmente comprometida, mirá si hay contexto de confirmación de turnos.
+   Producción por hora-sillón baja con horas-sillón ocupadas altas →
+   problema de mix/ticket, no de ocupación. Preferí explicar un gap
+   cruzando OTROS KPIs del mismo payload antes que usar solo contexto
+   cualitativo o benchmark — es el dato más fuerte que tenés, viene de la
+   misma clínica y del mismo período.
 
 7. Nunca dictamines con más seguridad de la que los datos permiten. Si el
    contexto es insuficiente para explicar un gap, decilo así ("el número
@@ -185,8 +218,8 @@ def interpretar_kpi(
     kpi_id: int,
     valor_clinica: float,
     respuestas_diagnostico: dict[str, str],
-    semanas_de_datos_propios: int = 0,
-    serie_historica: Optional[list] = None,
+    semanas_de_datos_propios: Optional[int] = None,
+    serie_historica: Optional[dict] = None,
     client=None,
 ) -> dict:
     """
@@ -194,19 +227,32 @@ def interpretar_kpi(
     (si existe), lo cruza con el contexto cualitativo relevante para ese
     KPI, y pondera benchmark vs. historial propio según cuánto tiempo
     lleva la clínica generando sus propios datos.
+
+    `serie_historica`: {período: valor} del propio KPI (lo arma
+    coverage.evaluar_cobertura cuando todas sus variables traen serie —
+    ver kpis_calculados[kpi_id]["serie"]). Si no se pasa
+    `semanas_de_datos_propios` explícito, se deriva de esta serie en vez
+    de asumir 0 — antes ningún llamador la calculaba, así que la
+    ponderación siempre terminaba apoyándose al máximo en el benchmark
+    externo (hallazgo 4).
     """
+    if semanas_de_datos_propios is None:
+        semanas_de_datos_propios = semanas_desde_serie(serie_historica)
+
     gap = calcular_gap(kpi_id, valor_clinica)
     contexto = construir_contexto_cualitativo(respuestas_diagnostico, kpi_id=kpi_id)
     ponderacion = peso_benchmark_vs_historial(semanas_de_datos_propios)
+    kpi = KPI_BY_ID[kpi_id]
 
     payload = {
-        "kpi": KPI_BY_ID[kpi_id].nombre,
+        "kpi": kpi.nombre,
         "valor_actual": valor_clinica,
+        "valor_formateado": fmt_por_unidad(valor_clinica, kpi.unidad),
         "gap": _gap_a_dict(gap),
         "contexto_cualitativo": contexto,
         "ponderacion": ponderacion,
         "semanas_de_datos_propios": semanas_de_datos_propios,
-        "serie_historica_propia": serie_historica or [],
+        "serie_historica_propia": serie_historica or {},
     }
 
     if client is None:
@@ -217,6 +263,64 @@ def interpretar_kpi(
     respuesta = client.messages.create(
         model=MODEL,
         max_tokens=800,
+        system=SYSTEM_PROMPT_BASE,
+        messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)}],
+    )
+    return {"payload_enviado_al_asistente": payload, "interpretacion": extraer_texto(respuesta)}
+
+
+def interpretar_panel(
+    kpis_calculados: dict[int, dict],
+    respuestas_diagnostico: dict[str, str],
+    client=None,
+) -> dict:
+    """
+    Interpreta TODO el panel en una sola llamada — a diferencia de
+    `interpretar_kpi`, que solo ve un KPI a la vez y por diseño no puede
+    cruzar nada (hallazgo 2 del informe de deficiencias: "el agente no
+    relaciona métricas que podrían combinarse"). Acá el modelo recibe
+    todos los KPIs ya calculados, su serie histórica, y el contexto
+    cualitativo completo, y puede razonar sobre el conjunto (regla 8 del
+    system prompt) — ej. aceptación alta + ticket bajo = problema de mix,
+    no de cierre de venta.
+
+    `kpis_calculados`: el dict que devuelve pipeline.procesar_migracion
+    en "kpis_calculados" (kpi_id -> {"valor", "unidad", "confianza",
+    "serie", ...}).
+    """
+    contexto_general = construir_contexto_cualitativo(respuestas_diagnostico, kpi_id=None)
+
+    kpis_payload = []
+    for kpi_id, info in sorted(kpis_calculados.items()):
+        valor = info.get("valor")
+        serie = info.get("serie")
+        ponderacion = peso_benchmark_vs_historial(semanas_desde_serie(serie))
+
+        gap_dict = {"tiene_benchmark": False, "direccion": "no_aplica"}
+        if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+            gap_dict = _gap_a_dict(calcular_gap(kpi_id, valor))
+
+        kpis_payload.append({
+            "kpi_id": kpi_id,
+            "nombre": info.get("nombre") or info.get("kpi_nombre") or KPI_BY_ID[kpi_id].nombre,
+            "valor_actual": valor,
+            "valor_formateado": fmt_por_unidad(valor, info.get("unidad", "")),
+            "unidad": info.get("unidad"),
+            "confianza": info.get("confianza"),
+            "gap": gap_dict,
+            "contexto_cualitativo": construir_contexto_cualitativo(respuestas_diagnostico, kpi_id=kpi_id),
+            "ponderacion": ponderacion,
+            "serie_historica_propia": serie or {},
+        })
+
+    payload = {"kpis": kpis_payload, "contexto_general": contexto_general}
+
+    if client is None:
+        return {"payload_enviado_al_asistente": payload, "interpretacion": None}
+
+    respuesta = client.messages.create(
+        model=MODEL,
+        max_tokens=2000,
         system=SYSTEM_PROMPT_BASE,
         messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)}],
     )

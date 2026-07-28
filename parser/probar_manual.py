@@ -13,7 +13,6 @@ Necesita ANTHROPIC_API_KEY en el entorno o en un .env en la raíz del
 proyecto — nunca hardcodeada acá.
 """
 
-import json
 import os
 import tempfile
 from pathlib import Path
@@ -22,7 +21,8 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from pipeline import EXTRACTOR_POR_EXTENSION, procesar_migracion
-from interpretacion import interpretar_kpi
+from interpretacion import interpretar_kpi, interpretar_panel
+from formato import fmt_por_unidad
 
 try:
     import anthropic
@@ -78,17 +78,54 @@ if resultado:
         filas = [
             {
                 "KPI": info["kpi_nombre"],
-                "Valor": info["valor"] if not isinstance(info["valor"], dict)
-                else json.dumps(info["valor"], ensure_ascii=False),
-                "Unidad": info["unidad"],
+                "Valor": fmt_por_unidad(info["valor"], info["unidad"]),
                 "Confianza": info["confianza"],
                 "Fuentes": ", ".join(info["fuentes"]),
+                "Serie histórica": ", ".join(f"{p}: {v}" for p, v in info["serie"].items()) if info.get("serie") else "—",
             }
             for info in resultado["kpis_calculados"].values()
         ]
         st.dataframe(filas, use_container_width=True)
     else:
         st.caption("Ninguno todavía — depende de qué variables falten.")
+
+    if resultado.get("kpis_con_error"):
+        st.subheader("2b. KPIs con error de cálculo")
+        st.caption("No desaparecen en silencio — quedan acá con el motivo (ver plan de confiabilidad, hallazgo B).")
+        for kpi_id, motivo in resultado["kpis_con_error"].items():
+            st.error(f"KPI {kpi_id}: {motivo}")
+
+    if resultado.get("variables_en_cuarentena"):
+        st.subheader("2c. Variables en cuarentena")
+        st.caption(
+            "Datos que se extrajeron pero no pasaron las guardas de validacion.py o "
+            "reconciliacion.py — no se usan para calcular ningún KPI hasta que se confirmen."
+        )
+        st.dataframe(
+            [{"Variable": v, "Valor extraído": info["valor"], "Fuente": info["fuente"], "Motivo": info["motivo"]}
+             for v, info in resultado["variables_en_cuarentena"].items()],
+            use_container_width=True,
+        )
+
+    if resultado.get("variables_derivadas"):
+        st.subheader("2e. Variables derivadas de una tasa")
+        st.caption(
+            "La planilla no traía estas variables como columna, pero sí la tasa que las contiene: "
+            "se despejaron algebraicamente. Se muestran siempre como dato a confirmar, nunca como "
+            "valor observado."
+        )
+        st.dataframe(
+            [{"Variable": d["variable"], "Valor derivado": d["valor"],
+              "Despejada de": d["desde_denominador"], "Tasa declarada (%)": d["tasa_declarada"],
+              "KPI origen": d["kpi_id"]}
+             for d in resultado["variables_derivadas"]],
+            use_container_width=True,
+        )
+
+    if resultado.get("discrepancias_reconciliacion"):
+        st.subheader("2d. Discrepancias de reconciliación")
+        st.caption("La tasa que calcula el KPI no coincide con la que la propia planilla ya declaraba al lado.")
+        st.dataframe(resultado["discrepancias_reconciliacion"], use_container_width=True)
 
     st.subheader("3. Preguntas pendientes del wizard")
     if resultado["preguntas_wizard"]:
@@ -112,34 +149,52 @@ if resultado:
         st.caption("Ninguna.")
 
     st.divider()
-    st.subheader("6. Interpretar un KPI calculado")
+    st.subheader("6. Interpretación del asistente")
     if resultado["kpis_calculados"]:
+        respuestas_raw = st.text_area(
+            "Contexto cualitativo (opcional) — una línea por respuesta, "
+            "formato 'P20: no hacemos seguimiento de presupuestos'",
+            height=100,
+            key="respuestas_diagnostico",
+        )
+
+        def _parsear_respuestas() -> dict:
+            respuestas = {}
+            for linea in respuestas_raw.splitlines():
+                if ":" in linea:
+                    clave, valor = linea.split(":", 1)
+                    respuestas[clave.strip()] = valor.strip()
+            return respuestas
+
+        st.markdown("**6a. Panel completo** — el asistente ve todos los KPIs a la vez y puede cruzarlos entre sí.")
+        if st.button("Interpretar panel completo"):
+            with st.spinner("Llamando a interpretar_panel contra la API real..."):
+                resultado_panel = interpretar_panel(
+                    kpis_calculados=resultado["kpis_calculados"],
+                    respuestas_diagnostico=_parsear_respuestas(),
+                    client=client,
+                )
+            st.markdown("**Diagnóstico del asistente (panel):**")
+            st.write(resultado_panel["interpretacion"])
+            with st.expander("Ver payload enviado al asistente"):
+                st.json(resultado_panel["payload_enviado_al_asistente"])
+
+        st.markdown("**6b. Zoom a un solo KPI**")
         kpi_ids = list(resultado["kpis_calculados"].keys())
         kpi_elegido = st.selectbox(
             "KPI a interpretar",
             kpi_ids,
             format_func=lambda kid: resultado["kpis_calculados"][kid]["kpi_nombre"],
         )
-        respuestas_raw = st.text_area(
-            "Contexto cualitativo (opcional) — una línea por respuesta, "
-            "formato 'P20: no hacemos seguimiento de presupuestos'",
-            height=100,
-        )
-        semanas_propias = st.number_input("Semanas de datos propios de la clínica", min_value=0, value=0)
 
-        if st.button("Interpretar"):
-            respuestas = {}
-            for linea in respuestas_raw.splitlines():
-                if ":" in linea:
-                    clave, valor = linea.split(":", 1)
-                    respuestas[clave.strip()] = valor.strip()
-
+        if st.button("Interpretar este KPI"):
+            info_kpi = resultado["kpis_calculados"][kpi_elegido]
             with st.spinner("Llamando a interpretar_kpi contra la API real..."):
                 resultado_interp = interpretar_kpi(
                     kpi_id=kpi_elegido,
-                    valor_clinica=resultado["kpis_calculados"][kpi_elegido]["valor"],
-                    respuestas_diagnostico=respuestas,
-                    semanas_de_datos_propios=int(semanas_propias),
+                    valor_clinica=info_kpi["valor"],
+                    respuestas_diagnostico=_parsear_respuestas(),
+                    serie_historica=info_kpi.get("serie"),
                     client=client,
                 )
             st.markdown("**Diagnóstico del asistente:**")

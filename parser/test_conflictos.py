@@ -80,6 +80,60 @@ def test_tercer_candidato_de_baja_confianza_no_rompe_acuerdo_entre_los_dos_mejor
     assert resueltas["no_shows"].valor == 13
 
 
+def test_series_de_archivos_distintos_se_fusionan():
+    # dos Excels que cubren rangos de meses distintos: la serie resuelta
+    # tiene que traer los meses de los dos, no solo los del que ganó el
+    # valor vigente.
+    fuentes = [
+        {"consultas_nuevas_mes": VariableValue(
+            95, "migracion_excel", 0.9, archivo_origen="ene_abr.xlsx",
+            serie={"Enero 2026": 95.0, "Febrero 2026": 88.0}, periodo="Febrero 2026",
+        )},
+        {"consultas_nuevas_mes": VariableValue(
+            102, "migracion_excel", 0.9, archivo_origen="may_jun.xlsx",
+            serie={"Mayo 2026": 98.0, "Junio 2026": 102.0}, periodo="Junio 2026",
+        )},
+    ]
+    resueltas, conflictos = resolver_conflictos(fuentes)
+    assert conflictos == []
+    assert resueltas["consultas_nuevas_mes"].serie == {
+        "Enero 2026": 95.0, "Febrero 2026": 88.0, "Mayo 2026": 98.0, "Junio 2026": 102.0,
+    }
+
+
+def test_periodo_en_comun_con_valores_distintos_gana_mayor_confianza_en_la_serie():
+    fuentes = [
+        {"consultas_nuevas_mes": VariableValue(
+            88, "migracion_excel", 0.5, archivo_origen="a.xlsx",
+            serie={"Febrero 2026": 88.0}, periodo="Febrero 2026",
+        )},
+        {"consultas_nuevas_mes": VariableValue(
+            90, "migracion_excel", 0.9, archivo_origen="b.xlsx",
+            serie={"Febrero 2026": 90.0}, periodo="Febrero 2026",
+        )},
+    ]
+    resueltas, conflictos = resolver_conflictos(fuentes)
+    assert conflictos == []
+    assert resueltas["consultas_nuevas_mes"].serie == {"Febrero 2026": 90.0}
+
+
+def test_periodo_empatado_con_valores_distintos_genera_conflicto():
+    fuentes = [
+        {"consultas_nuevas_mes": VariableValue(
+            88, "migracion_excel", 0.8, archivo_origen="a.xlsx",
+            serie={"Febrero 2026": 88.0}, periodo="Febrero 2026",
+        )},
+        {"consultas_nuevas_mes": VariableValue(
+            95, "migracion_excel", 0.75, archivo_origen="b.xlsx",
+            serie={"Febrero 2026": 95.0}, periodo="Febrero 2026",
+        )},
+    ]
+    resueltas, conflictos = resolver_conflictos(fuentes)
+    assert "consultas_nuevas_mes" not in resueltas
+    assert len(conflictos) == 1
+    assert conflictos[0].variable == "consultas_nuevas_mes"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

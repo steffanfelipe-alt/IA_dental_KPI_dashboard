@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "streamlit-probar-parser",
+      "runtimeExecutable": "/Users/felipesteffan/Desktop/agencia_ia_dental_dashboard/venv/bin/streamlit",
+      "runtimeArgs": ["run", "/Users/felipesteffan/Desktop/agencia_ia_dental_dashboard/parser/probar_manual.py", "--server.headless", "true", "--server.port", "$PORT"],
+      "port": 8501,
+      "autoPort": true
+    }
+  ]
+}

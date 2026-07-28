@@ -11,11 +11,32 @@ su planilla distinto. En cambio:
 
   1. pandas lee cada hoja del archivo en crudo (sin asumir dónde está el
      encabezado) y arma una vista previa de sus primeras filas.
-  2. Claude ve esa vista cruda de todas las hojas y devuelve, por hoja,
-     cuál fila es el encabezado real y el mapeo semántico de cada columna
-     (por posición, no por nombre) contra el vocabulario de schema.py.
-  3. Con la fila de encabezado ya identificada, se vuelve a leer cada hoja
-     bien formada y se aplica el mapeo: se agregan/normalizan los valores.
+  2. Claude ve esa vista cruda de todas las hojas y devuelve, por hoja, la
+     ORIENTACIÓN de la tabla, cuál fila es el encabezado real, y el mapeo
+     semántico de cada columna/fila (por posición, no por nombre) contra
+     el diccionario de métricas de schema.py.
+  3. Con eso identificado, se vuelve a leer cada hoja bien formada y se
+     aplica el mapeo: se agregan/normalizan los valores y, cuando hay una
+     columna de período, se arma además la serie histórica.
+
+Contrato v2 (plan de confiabilidad del agente de diagnóstico, hallazgos
+1.1/1.3/C): a diferencia de la v1, que solo clasificaba columnas y
+promediaba a ciegas, esta versión:
+  - distingue "orientacion" de la hoja (períodos en filas / una fila por
+    métrica distinta / transaccional) — evita que una hoja "una fila =
+    una métrica" (ej. tiempo de respuesta + horas manuales + % automatizado
+    todo en la misma columna "Valor") se trate como si fuera una sola
+    serie y se promedien entre sí métricas sin relación.
+  - excluye explícitamente filas de TOTAL/Promedio antes de agregar nada
+    (el bug real: una fila "TOTAL / Prom." se estaba promediando como si
+    fuera un mes más, inflando cada número ~71%).
+  - arma una serie histórica por período cuando hay una columna de
+    período, y usa el ÚLTIMO período real como "valor vigente" — nunca
+    un promedio que mezcla todo el rango con la fila total.
+  - declara la unidad de origen de cada columna y el código aplica la
+    conversión (el modelo nunca hace la aritmética de conversión él
+    mismo, que es donde fallaba: "6.5 horas" quedaba guardado como "6.5
+    min" en vez de 390).
 
 El resultado son VariableValue con fuente="migracion_excel" (o
 "migracion_excel:<hoja>" cuando el archivo tiene más de una hoja) y una
@@ -23,11 +44,12 @@ confianza que baja si Claude no está seguro del mapeo de una columna.
 """
 
 import json
-from typing import Optional
+from dataclasses import dataclass
+from typing import Any, Optional
 
 import pandas as pd
 
-from schema import VARIABLE_TYPES
+from schema import KPI_FORMULAS, METRICAS, METRICAS_EXTRAIBLES, VARIABLE_TYPES
 from coverage import VariableValue
 from claude_utils import extraer_texto
 
@@ -40,7 +62,54 @@ except ImportError:  # pragma: no cover
 MODEL = "claude-sonnet-5"
 FILAS_PREVIEW = 10
 
-VARIABLES_DICT = sorted(v for v, t in VARIABLE_TYPES.items() if t == "dict")
+
+@dataclass
+class TasaDeclarada:
+    """Una tasa/porcentaje que la propia planilla ya trae calculada.
+
+    Siempre en porcentaje 0-100 (la unidad en la que trabajan las fórmulas
+    de schema.py), sin importar si la hoja la guardaba como fracción.
+    `serie` es {período: %} cuando la hoja tiene eje temporal.
+    """
+    vigente: float
+    serie: Optional[dict[str, float]] = None
+
+# excel_parser nunca intenta mapear variables tipo "list" (ej.
+# tareas_sin_backup: [{tarea, responsable}, ...]) — una planilla rara vez
+# trae esa estructura, y forzarla producía el hallazgo B (un conteo suelto
+# como "4" terminaba guardado donde se esperaba una lista de tareas). Esas
+# variables se piden en el wizard, no se extraen de Excel.
+VARIABLES_EXCEL = {v: info for v, info in METRICAS_EXTRAIBLES.items() if VARIABLE_TYPES.get(v) != "list"}
+VARIABLES_DICT = sorted(v for v in VARIABLES_EXCEL if VARIABLE_TYPES.get(v) == "dict")
+
+UNIDADES_DATO_USADAS = sorted({info.unidad_dato for info in VARIABLES_EXCEL.values()})
+
+# El modelo solo DECLARA en qué unidad está el dato de origen; la
+# conversión numérica la hace siempre el código (nunca el modelo — ahí
+# fallaba antes: "convertí vos el valor a minutos" nunca se podía cumplir
+# porque el contrato solo transportaba índices de columna + agregación).
+FACTORES_CONVERSION: dict[tuple[str, str], float] = {
+    ("horas", "minutos"): 60,
+    ("minutos", "horas"): 1 / 60,
+    ("dias", "minutos"): 24 * 60,
+    ("dias", "horas"): 24,
+}
+
+# KPIs que son un % calculado a partir de un par de variables — reconciliacion.py
+# (Fase 3) los usa para chequear cruzado si la hoja YA trae esa tasa
+# calculada al lado del conteo crudo.
+_KPIS_PORCENTUALES_JSON = json.dumps(
+    [{"kpi_id": k.id, "nombre": k.nombre, "variables": k.variables} for k in KPI_FORMULAS if k.unidad == "%"],
+    ensure_ascii=False, indent=2,
+)
+
+_VARIABLES_JSON = json.dumps(
+    {v: {"nombre": info.nombre_humano, "definicion": info.definicion,
+         "unidad_esperada": info.unidad_dato,
+         "no_confundir_con": info.no_confundir_con or None}
+     for v, info in VARIABLES_EXCEL.items()},
+    ensure_ascii=False, indent=2,
+)
 
 SYSTEM_PROMPT = f"""Sos un normalizador de datos para clínicas dentales argentinas.
 Te paso, por cada hoja de un Excel (o la única hoja implícita de un CSV),
@@ -48,65 +117,106 @@ una vista cruda de sus primeras {FILAS_PREVIEW} filas — SIN asumir dónde
 está el encabezado: es común que haya una fila de título y una fila vacía
 antes de la fila real de nombres de columna (reportes armados a mano).
 
+IMPORTANTE: todos los índices de fila que uses en tu respuesta
+("fila_encabezado", "filas_excluidas", "fila_index") se refieren a la
+MISMA numeración 0-based del grid crudo que te paso — no a la tabla ya
+"limpia". Los índices de columna también son 0-based sobre ese mismo grid.
+
+Cuando el archivo es un Excel, cada hoja puede traer también
+"formatos_columna": {{indice_de_columna: formato}} leído del propio
+archivo. Usalo, es un dato duro, no una pista: una columna con formato
+"porcentaje" es una TASA ya calculada — nunca la mapees a una variable de
+conteo o de monto. Esa columna va en "tasas_declaradas" (punto 7), no en
+"mapeo". Una columna "moneda" es un monto en pesos, no un conteo.
+
 Tu trabajo, por cada hoja:
 
-1. Identificar el índice (0-based) de la fila que contiene los nombres de
-   columna reales. Si la hoja no tiene una tabla reconocible, devolvé
-   "fila_encabezado": null y "mapeo": [].
-2. Mapear cada columna (por su índice, NO por nombre) a UNA de estas
-   variables (o null si ninguna aplica):
+1. Identificar el índice de la fila que contiene los nombres de columna
+   reales ("fila_encabezado"). Si la hoja no tiene una tabla reconocible,
+   devolvé "fila_encabezado": null y "mapeo": [].
 
-{json.dumps(list(VARIABLE_TYPES.keys()), ensure_ascii=False, indent=2)}
+2. Clasificar la "orientacion" de la tabla — esto es crítico, un error acá
+   arruina todo lo que sigue:
+   - "periodos_en_filas": cada fila es un período (mes/semana) con varias
+     métricas en columnas. Ej: una fila por mes, columnas "Consultas
+     nuevas", "Turnos agendados", etc.
+   - "metricas_en_filas": cada fila es una MÉTRICA DISTINTA, típicamente
+     con columnas "Métrica"/"Valor" (a veces "Unidad", "Comentario"). Ojo:
+     acá las filas NO son períodos de una misma variable, cada una es una
+     variable distinta — nunca se agregan/promedian entre sí.
+   - "transaccional": cada fila es un registro individual (una consulta,
+     un presupuesto, un turno) sin agregación previa.
 
-   Estas variables en particular NO son un número suelto: son un
-   desglose por categoría (ej. horas por tarea, ingreso por tipo de
-   tratamiento, ingreso por paciente):
+3. Si "orientacion" es "periodos_en_filas": indicá "columna_periodo" —
+   el ÍNDICE numérico 0-based de la columna con el nombre del período
+   (ej. 0), IGUAL que "columna_index" en el mapeo. NUNCA el nombre de la
+   columna ni el texto de un período — un índice, como en todos los demás
+   campos "*_index" de este contrato. Indicá también "filas_excluidas"
+   — filas que NO son un período real: cualquier fila de TOTAL, Promedio,
+   Prom., Acumulado, Subtotal, o cualquier fila cuyo valor sea la suma de
+   las filas anteriores en esa columna. Estas filas son muy comunes en
+   reportes armados a mano y NUNCA deben tratarse como un período más — si
+   las incluís en un promedio, el número final queda inflado.
+
+4. Mapear cada variable a UNA columna (para periodos_en_filas y
+   transaccional) o a UNA fila+columna (para metricas_en_filas), del
+   diccionario de variables de abajo. Cada una trae su definición completa,
+   la unidad en la que se espera el dato, y con qué variable parecida NO
+   hay que confundirla — usalo, ahí es donde más se equivocaba una versión
+   anterior de este sistema:
+
+{_VARIABLES_JSON}
+
+   Las variables de este subconjunto son un desglose por categoría, no un
+   número suelto (ej. horas por tarea, ingreso por tipo de tratamiento):
 
 {json.dumps(VARIABLES_DICT, ensure_ascii=False, indent=2)}
 
-   Cuando mapees una columna a una de estas, indicá también
-   "columna_categoria_index": el índice de la columna que da la
-   categoría por la que agrupar (nombre de tarea, tipo de tratamiento,
-   o paciente, según corresponda). Si la hoja SÍ tiene una columna así
-   (por ejemplo, una fila por transacción con su tipo de tratamiento),
-   usala. Si la hoja solo te da un total ya agregado para esa variable,
-   sin ninguna columna que sirva de categoría, mapeá igual pero sin
-   "columna_categoria_index" — se va a guardar como un desglose de una
-   sola categoría ("total").
+   Para esas, indicá también "columna_categoria_index": la columna que da
+   la categoría por la que agrupar. Si la hoja solo da un total ya
+   agregado sin columna de categoría, mapeá igual sin
+   "columna_categoria_index" — se guarda como desglose de una sola clave
+   ("total").
 
-   Ojo con un caso distinto: una hoja "larga" donde cada FILA es una
-   MÉTRICA distinta (ej. una columna "Métrica" con nombres como "Horas/
-   semana en tareas repetitivas", "% de tareas automatizadas", etc., y
-   una columna "Valor" al lado). Ahí las filas no son categorías de una
-   misma variable — cada una es una variable distinta. En ese caso usá
-   "condicion" para quedarte solo con la fila que corresponde (ej.
-   condicion: "Metrica == 'Horas/semana de recepcion en tareas
-   repetitivas'") y NO indiques "columna_categoria_index" — vas a
-   terminar con el desglose de una sola clave "total" correcto, en vez
-   de mezclar valores de métricas que no tienen nada que ver entre sí.
+5. Para cada regla de mapeo, declará "unidad_origen": la unidad en la que
+   está el dato EN LA HOJA (no la que se espera). Unidades válidas:
+   {json.dumps(UNIDADES_DATO_USADAS, ensure_ascii=False)}, más "horas",
+   "minutos", "dias" si la hoja usa esas para algo que se espera en otra
+   unidad. NO conviertas el número vos mismo — el código hace la
+   conversión a partir de lo que declares acá. Si no sabés la unidad,
+   usá la misma que "unidad_esperada" de la variable.
 
-Aclaración sobre una variable fácil de confundir:
-- "tiempo_respuesta_promedio_min" es cuánto tarda LA CLÍNICA en responder
-  a una consulta/lead NUEVO (primer contacto — WhatsApp, teléfono, etc.),
-  en MINUTOS. NO es cuánto tarda un paciente en aceptar o rechazar un
-  presupuesto ya enviado — eso es un dato distinto que hoy no tiene
-  variable en este vocabulario; si encontrás una columna así, dejala sin
-  mapear en vez de forzarla acá. Si la fuente da el dato en otra unidad
-  (horas, días), convertí el VALOR a minutos vos mismo antes de reportarlo.
+6. Para "metricas_en_filas": usá "fila_index" (índice de fila, misma
+   numeración del grid crudo) en vez de "condicion" para elegir la fila
+   que corresponde a cada variable, y "columna_index" para la columna del
+   valor. No hace falta "agregacion" en este caso (se toma el valor de esa
+   celda).
+
+7. Chequeo cruzado — MUY IMPORTANTE, es la principal defensa contra
+   mapear la columna equivocada: si la hoja también trae, al lado de los
+   conteos crudos, una columna con una TASA o PORCENTAJE YA CALCULADO que
+   corresponde a uno de estos KPIs, reportalo aparte en
+   "tasas_declaradas" (no reemplaza el mapeo de variables, es redundante
+   a propósito):
+
+{_KPIS_PORCENTUALES_JSON}
+
+   Por cada una que encuentres: {{"kpi_id": 4, "columna_index": 8,
+   "unidad_origen": "fraccion|porcentaje"}} — "fraccion" si la hoja la
+   guarda como 0-1 (ej. 0.22), "porcentaje" si ya está en 0-100 (ej. 22).
+   Esto es lo que permite detectar después si, por ejemplo, "no_shows" se
+   mapeó de la columna equivocada: si el conteo que se mapeó implica una
+   tasa muy distinta a la que la propia hoja declara, algo está mal.
 
 Reglas generales:
-- Una hoja puede tener datos ya agregados por período (una fila = un mes)
-  en vez de datos crudos por transacción — en ese caso "agregacion"
-  normalmente es "avg" sobre la columna (promedio de los períodos de la
-  muestra), no "sum".
 - Una columna de fecha de turno + estado ("asistió"/"no show") normalmente
   te da tanto "turnos_agendados" (conteo de filas) como "no_shows" (conteo
-  de filas con estado ausente) — indicalo como dos reglas de agregación,
-  con "condicion" referenciando el nombre real de columna (el texto que
-  identificaste en la fila de encabezado, no el índice).
+  de filas con estado ausente) — indicalo como dos reglas, con "condicion"
+  referenciando el nombre real de columna (el texto de la fila de
+  encabezado, no el índice).
 - Si una columna es ambigua entre dos variables, elegí la más probable
   según el contexto de las otras columnas y bajá la confianza a 0.5 o menos.
-- Nunca inventes una variable que no está en la lista.
+- Nunca inventes una variable que no está en la lista de arriba.
 - Devolvé SOLO JSON, sin texto adicional, con este formato exacto:
 
 {{
@@ -114,11 +224,18 @@ Reglas generales:
     {{
       "hoja": "nombre de la hoja tal cual te la pasé (o null si es un CSV)",
       "fila_encabezado": 0,
+      "orientacion": "periodos_en_filas | metricas_en_filas | transaccional",
+      "columna_periodo": "opcional, solo si orientacion es periodos_en_filas",
+      "filas_excluidas": [8],
       "mapeo": [
-        {{"columna_index": 0, "variable": "...", "agregacion": "sum|count|count_where|avg",
+        {{"columna_index": 1, "fila_index": null, "variable": "...",
+          "agregacion": "sum|count|count_where|avg",
           "condicion": "opcional, ej. estado == 'no show'",
-          "columna_categoria_index": "opcional, solo para variables de tipo dict",
-          "confianza": 0.0-1.0}}
+          "columna_categoria_index": "opcional, solo para variables tipo dict",
+          "unidad_origen": "...", "confianza": 0.0-1.0}}
+      ],
+      "tasas_declaradas": [
+        {{"kpi_id": 4, "columna_index": 8, "unidad_origen": "fraccion|porcentaje"}}
       ],
       "columnas_sin_mapeo": [1, 3]
     }}
@@ -139,10 +256,81 @@ def leer_hojas_crudas(path: str) -> list[dict]:
 
     hojas = []
     excel = pd.ExcelFile(path)
+    formatos = leer_formatos_columna(path)
     for nombre in excel.sheet_names:
         df = excel.parse(nombre, header=None, nrows=FILAS_PREVIEW)
-        hojas.append({"hoja": nombre, "grid": _grid_serializable(df)})
+        hoja = {"hoja": nombre, "grid": _grid_serializable(df)}
+        if nombre in formatos:
+            hoja["formatos_columna"] = formatos[nombre]
+        hojas.append(hoja)
     return hojas
+
+
+def _clasificar_formato(number_format: str) -> str:
+    """Traduce un formato de celda de Excel a una etiqueta semántica.
+
+    El formato es una señal DETERMINISTA que hasta ahora se tiraba: una
+    celda formateada `0.00%` es por definición una tasa, no un conteo —
+    exactamente la confusión que originó el bug de `no_shows`. No depende
+    de que el modelo acierte.
+    """
+    if not number_format:
+        return "general"
+    fmt = number_format.lower()
+    if "%" in fmt:
+        return "porcentaje"
+    # El símbolo de moneda en Excel puede venir escapado ("\$") o como
+    # código de moneda entre corchetes ([$ARS]).
+    if "$" in fmt or "€" in fmt or "[$" in fmt:
+        return "moneda"
+    if any(t in fmt for t in ("yy", "mmm", "dd/", "hh:")):
+        return "fecha"
+    if fmt in ("general", "@"):
+        return "general" if fmt == "general" else "texto"
+    if "0" in fmt or "#" in fmt:
+        return "decimal" if "." in fmt else "entero"
+    return "general"
+
+
+def leer_formatos_columna(path: str, filas_muestra: int = 30) -> dict[str, dict[int, str]]:
+    """
+    {hoja: {indice_columna_0based: etiqueta_de_formato}} usando openpyxl.
+
+    Se queda con el formato DOMINANTE de las celdas con dato de cada
+    columna (una fila de encabezado suele tener formato distinto al de los
+    datos, así que la mayoría es más confiable que mirar una sola celda).
+    Un CSV no tiene formatos: devuelve {} y todo el resto sigue igual.
+    """
+    if not path.endswith((".xlsx", ".xlsm", ".xltx")):
+        return {}  # CSV y .xls antiguo: sin metadata de formato disponible
+
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    except Exception:
+        return {}  # nunca romper la extracción por no poder leer formatos
+
+    resultado: dict[str, dict[int, str]] = {}
+    try:
+        for ws in wb.worksheets:
+            conteo: dict[int, dict[str, int]] = {}
+            for fila in ws.iter_rows(min_row=1, max_row=filas_muestra):
+                for celda in fila:
+                    if celda.value is None or isinstance(celda.value, str):
+                        continue  # el encabezado y las notas no describen el formato de los datos
+                    etiqueta = _clasificar_formato(celda.number_format)
+                    conteo.setdefault(celda.column - 1, {}).setdefault(etiqueta, 0)
+                    conteo[celda.column - 1][etiqueta] += 1
+            dominante = {
+                idx: max(etiquetas.items(), key=lambda kv: kv[1])[0]
+                for idx, etiquetas in conteo.items() if etiquetas
+            }
+            if dominante:
+                resultado[ws.title] = dominante
+    finally:
+        wb.close()
+
+    return resultado
 
 
 def pedir_mapeo_a_claude(hojas_crudas: list[dict], client) -> dict:
@@ -166,6 +354,49 @@ def _releer_con_encabezado(path: str, hoja: Optional[str], fila_encabezado: int)
     if path.endswith(".csv"):
         return pd.read_csv(path, header=fila_encabezado)
     return pd.read_excel(path, sheet_name=hoja, header=fila_encabezado)
+
+
+def _a_entero(valor: Any) -> Optional[int]:
+    """Coerción defensiva de cualquier campo "*_index" que Claude debía
+    devolver como índice numérico. Un LLM ocasionalmente devuelve el
+    nombre de la columna en vez del índice (visto en la práctica con
+    "columna_periodo") — en vez de que eso reviente más abajo con un
+    TypeError al comparar str con int, se descarta la regla puntual
+    (devuelve None) en lugar de adivinar a qué columna se refería."""
+    if valor is None or isinstance(valor, bool):
+        return None
+    if isinstance(valor, int):
+        return valor
+    if isinstance(valor, float) and valor.is_integer():
+        return int(valor)
+    if isinstance(valor, str) and valor.strip().lstrip("-").isdigit():
+        return int(valor)
+    return None
+
+
+def _a_indice_relativo(fila_encabezado: int, fila_raw: Optional[int]) -> Optional[int]:
+    """Convierte un índice de fila del grid crudo (lo que reporta Claude)
+    al índice 0-based que tiene esa misma fila en el DataFrame ya leído
+    con `header=fila_encabezado` (que pandas re-indexa a partir de 0)."""
+    fila_raw = _a_entero(fila_raw)
+    if fila_raw is None:
+        return None
+    relativo = fila_raw - fila_encabezado - 1
+    return relativo if relativo >= 0 else None
+
+
+def _convertir_unidad(var: str, valor: Any, unidad_origen: Optional[str]) -> Any:
+    info = METRICAS.get(var)
+    if info is None or not unidad_origen or unidad_origen == info.unidad_dato:
+        return valor
+    factor = FACTORES_CONVERSION.get((unidad_origen, info.unidad_dato))
+    if factor is None:
+        return valor  # unidad no reconocida: no se inventa una conversión
+    if isinstance(valor, dict):
+        return {k: round(v * factor, 4) if isinstance(v, (int, float)) else v for k, v in valor.items()}
+    if isinstance(valor, (int, float)):
+        return round(valor * factor, 4)
+    return valor
 
 
 def _agregar_escalar(serie: pd.Series, agregacion: str) -> Optional[float]:
@@ -224,49 +455,195 @@ def _agregar_dict(
     return desglose or None
 
 
+def _construir_serie_periodo(
+    df_filtrado: pd.DataFrame, col_valor: str, col_periodo: str, agregacion: str,
+) -> Optional[dict]:
+    """{período: valor} para una variable escalar en una hoja
+    periodos_en_filas — la fila TOTAL ya se excluyó antes de llegar acá
+    (ver `aplicar_mapeo`), así que ningún período "fantasma" se cuela."""
+    valores = pd.to_numeric(df_filtrado[col_valor], errors="coerce")
+    periodos = df_filtrado[col_periodo].astype(str).str.strip()
+    # sort=False: preserva el orden de aparición de las filas (cronológico
+    # en una hoja "un mes por fila"), NO el orden alfabético — pandas
+    # ordena por clave por default, lo que pondría "Abril" antes que
+    # "Enero" y rompería qué período es "el último" (el vigente).
+    agrupado = valores.groupby(periodos, sort=False)
+    resultado = agrupado.mean() if agregacion == "avg" else agrupado.sum()
+    resultado = resultado.dropna()
+    serie = {str(k): round(float(v), 4) for k, v in resultado.items() if str(k) and str(k).lower() != "nan"}
+    return serie or None
+
+
+def _df_base_y_periodo(df: pd.DataFrame, mapeo_hoja: dict) -> tuple[pd.DataFrame, Optional[str], int]:
+    """Excluye filas_excluidas y resuelve la columna de período — lo
+    comparten `aplicar_mapeo` y `extraer_tasas_declaradas` (reconciliación,
+    Fase 3) para no repetir la lógica de índices dos veces."""
+    orientacion = mapeo_hoja.get("orientacion", "periodos_en_filas")
+    fila_encabezado = mapeo_hoja.get("fila_encabezado") or 0
+
+    filas_excluidas_raw = mapeo_hoja.get("filas_excluidas") or []
+    filas_excluidas = {
+        i for i in (_a_indice_relativo(fila_encabezado, f) for f in filas_excluidas_raw)
+        if i is not None and i in df.index
+    }
+    df_base = df.drop(index=list(filas_excluidas)) if filas_excluidas else df
+
+    idx_periodo = _a_entero(mapeo_hoja.get("columna_periodo"))
+    col_periodo = df_base.columns[idx_periodo] if (
+        orientacion == "periodos_en_filas" and idx_periodo is not None and idx_periodo < len(df_base.columns)
+    ) else None
+
+    return df_base, col_periodo, fila_encabezado
+
+
+def extraer_tasas_declaradas(df: pd.DataFrame, mapeo_hoja: dict) -> dict[int, "TasaDeclarada"]:
+    """
+    Reconciliación (Fase 3, hallazgo E): muchas planillas ya traen, al
+    lado de los conteos crudos, la tasa/porcentaje calculado (ej. "Tasa
+    no-show"). Esto la extrae para que reconciliacion.py la compare contra
+    lo que da la fórmula del KPI con las variables ya extraídas — si no
+    coinciden, algo se mapeó mal (típicamente: se tomó la columna de tasa
+    en vez de la de conteo, o viceversa).
+
+    Devuelve la serie completa además del valor vigente: derivacion.py la
+    usa para reconstruir una variable faltante período por período, no
+    solo para el mes actual.
+    """
+    df_base, col_periodo, _ = _df_base_y_periodo(df, mapeo_hoja)
+    resultado: dict[int, TasaDeclarada] = {}
+    for regla in mapeo_hoja.get("tasas_declaradas") or []:
+        kpi_id = _a_entero(regla.get("kpi_id"))
+        idx = _a_entero(regla.get("columna_index"))
+        if kpi_id is None or idx is None or idx >= len(df_base.columns):
+            continue
+        col = df_base.columns[idx]
+        valores = pd.to_numeric(df_base[col], errors="coerce")
+
+        serie = None
+        if col_periodo is not None:
+            serie = _construir_serie_periodo(df_base, col, col_periodo, "avg")
+            valor = list(serie.values())[-1] if serie else None
+        else:
+            no_nulos = valores.dropna()
+            valor = float(no_nulos.iloc[-1]) if not no_nulos.empty else None
+
+        if valor is None:
+            continue
+
+        # Una tasa puede venir como fracción (0.22) o ya en porcentaje
+        # (22). Todo se normaliza a porcentaje acá — es la unidad en la que
+        # trabajan las fórmulas de schema.py (_pct devuelve 0-100).
+        factor = 100 if regla.get("unidad_origen") == "fraccion" else 1
+        resultado[kpi_id] = TasaDeclarada(
+            vigente=round(valor * factor, 2),
+            serie={p: round(v * factor, 2) for p, v in serie.items()} if serie else None,
+        )
+
+    return resultado
+
+
+# Unidades en las que un dato SÍ puede venir expresado como porcentaje.
+# Hoy ninguna variable del vocabulario lo está (son conteos, montos, horas
+# y minutos), así que en la práctica la guarda rechaza todo mapeo desde
+# una columna con formato %. Se deja derivado de METRICAS en vez de
+# hardcodear "rechazar siempre" para que la regla se ajuste sola si mañana
+# se agrega una variable que sí sea un porcentaje.
+UNIDADES_PORCENTUALES = {"porcentaje", "tasa"}
+
+
+def _formato_incompatible(var: str, formato: Optional[str]) -> bool:
+    """Guarda determinista: una columna formateada como % no puede ser el
+    origen de una variable que no se mide en %. Es el hard stop contra el
+    error que originó todo el plan (mapear "Tasa no-show" a `no_shows`,
+    que es un conteo) — sin depender de que el modelo acierte."""
+    if formato != "porcentaje":
+        return False
+    info = METRICAS.get(var)
+    return (info.unidad_dato if info else None) not in UNIDADES_PORCENTUALES
+
+
 def aplicar_mapeo(
     df: pd.DataFrame,
     mapeo_hoja: dict,
     variables: Optional[dict[str, VariableValue]] = None,
+    formatos_columna: Optional[dict[int, str]] = None,
 ) -> dict[str, VariableValue]:
     variables = dict(variables) if variables else {}
     hoja = mapeo_hoja.get("hoja")
     fuente = f"migracion_excel:{hoja}" if hoja else "migracion_excel"
+    orientacion = mapeo_hoja.get("orientacion", "periodos_en_filas")
+    df_base, col_periodo, fila_encabezado = _df_base_y_periodo(df, mapeo_hoja)
 
     for regla in mapeo_hoja["mapeo"]:
-        idx = regla.get("columna_index")
-        var = regla["variable"]
-        if var is None or idx is None or idx >= len(df.columns):
+        var = regla.get("variable")
+        if var is None or var not in VARIABLE_TYPES:
             continue
-        col = df.columns[idx]
-
-        df_filtrado = df
-        if regla.get("condicion"):
-            try:
-                df_filtrado = df.query(regla["condicion"])
-            except Exception:
-                pass  # condición no aplicable con pandas.query, se ignora esa regla puntual
-
-        agregacion = regla.get("agregacion", "sum")
         tipo_var = VARIABLE_TYPES.get(var)
+        if tipo_var == "list":
+            continue  # excel_parser nunca produce listas — ver VARIABLES_EXCEL
+
+        if orientacion == "metricas_en_filas":
+            fila_idx = _a_indice_relativo(fila_encabezado, regla.get("fila_index"))
+            col_idx = _a_entero(regla.get("columna_index"))
+            if fila_idx is None or fila_idx not in df_base.index or col_idx is None or col_idx >= len(df_base.columns):
+                continue
+            col = df_base.columns[col_idx]
+            df_filtrado = df_base.loc[[fila_idx]]
+            agregacion = "sum"  # una sola celda: sum de 1 fila = esa celda
+            serie = None
+        else:
+            idx = _a_entero(regla.get("columna_index"))
+            if idx is None or idx >= len(df_base.columns):
+                continue
+            # Guarda de formato: solo en esta rama, donde una columna
+            # entera representa una variable. En "metricas_en_filas" el
+            # formato dominante de la columna "Valor" mezcla unidades de
+            # métricas distintas, así que no dice nada sobre la celda
+            # puntual y aplicarlo daría falsos rechazos.
+            if _formato_incompatible(var, (formatos_columna or {}).get(idx)):
+                continue
+            col = df_base.columns[idx]
+            df_filtrado = df_base
+            if regla.get("condicion"):
+                try:
+                    df_filtrado = df_filtrado.query(regla["condicion"])
+                except Exception:
+                    pass  # condición no aplicable con pandas.query, se ignora esa regla puntual
+            agregacion = regla.get("agregacion", "sum")
+            serie = None
+            if col_periodo is not None and tipo_var in ("int", "float"):
+                serie = _construir_serie_periodo(df_filtrado, col, col_periodo, agregacion)
 
         if tipo_var == "dict":
-            valor = _agregar_dict(df_filtrado, col, regla.get("columna_categoria_index"), df.columns, agregacion)
+            valor = _agregar_dict(df_filtrado, col, _a_entero(regla.get("columna_categoria_index")), df_base.columns, agregacion)
+        elif serie is not None:
+            # Con serie disponible, el "valor vigente" es el ÚLTIMO período
+            # real de la propia serie (no un promedio de todo el rango) —
+            # esto es lo que cierra el hallazgo 1.1: nunca se muestra un
+            # promedio inflado por la fila TOTAL como si fuera "el dato de
+            # hoy".
+            ultimo_periodo = list(serie.keys())[-1]
+            valor = serie[ultimo_periodo]
         else:
             valor = _agregar_escalar(df_filtrado[col], agregacion)
 
         if valor is None:
             continue
-        # Guarda defensiva: nunca guardar un tipo que no coincide con lo que
-        # espera VARIABLE_TYPES — esto es lo que hasta ahora dejaba pasar un
-        # float suelto para variables tipo dict (ej. horas_tarea_manual_semana)
-        # y hacía explotar las fórmulas de schema.py más adelante.
+
+        valor = _convertir_unidad(var, valor, regla.get("unidad_origen"))
+        if serie is not None:
+            serie = _convertir_unidad(var, serie, regla.get("unidad_origen"))
+
+        # Guarda defensiva: nunca guardar un tipo que no coincide con lo
+        # que espera VARIABLE_TYPES (ver hallazgo B: la guarda original
+        # solo cubría dict, no list — acá "list" ya se descartó arriba).
         if isinstance(valor, dict) != (tipo_var == "dict"):
             continue
 
-        # Si dos columnas (de la misma hoja o de hojas distintas) mapean a
-        # la misma variable, se prioriza la de mayor confianza.
-        nueva = VariableValue(valor=valor, fuente=fuente, confianza=regla.get("confianza", 0.8))
+        nueva = VariableValue(
+            valor=valor, fuente=fuente, confianza=regla.get("confianza", 0.8),
+            serie=serie, periodo=(list(serie.keys())[-1] if serie else None),
+        )
         existente = variables.get(var)
         if existente is None or nueva.confianza > existente.confianza:
             variables[var] = nueva
@@ -274,19 +651,29 @@ def aplicar_mapeo(
     return variables
 
 
-def parsear_excel(path: str, client: Optional["anthropic.Anthropic"] = None) -> dict[str, VariableValue]:
+def parsear_excel(
+    path: str, client: Optional["anthropic.Anthropic"] = None,
+) -> tuple[dict[str, VariableValue], dict[int, TasaDeclarada]]:
+    """Devuelve (variables, tasas_declaradas) — ver reconciliacion.py para
+    qué hace pipeline.py con el segundo elemento."""
     if client is None:
         assert anthropic is not None, "Instalar el SDK: pip install anthropic --break-system-packages"
         client = anthropic.Anthropic()
 
     hojas_crudas = leer_hojas_crudas(path)
     respuesta = pedir_mapeo_a_claude(hojas_crudas, client)
+    formatos_por_hoja = {h.get("hoja"): h.get("formatos_columna") or {} for h in hojas_crudas}
 
     variables: dict[str, VariableValue] = {}
+    tasas_declaradas: dict[int, TasaDeclarada] = {}
     for mapeo_hoja in respuesta["hojas"]:
         if mapeo_hoja.get("fila_encabezado") is None or not mapeo_hoja.get("mapeo"):
             continue
         df = _releer_con_encabezado(path, mapeo_hoja.get("hoja"), mapeo_hoja["fila_encabezado"])
-        variables = aplicar_mapeo(df, mapeo_hoja, variables)
+        formatos = formatos_por_hoja.get(mapeo_hoja.get("hoja")) or {}
+        variables = aplicar_mapeo(df, mapeo_hoja, variables, formatos_columna=formatos)
+        # Las tasas declaradas NO pasan por la guarda de formato: ahí un
+        # formato % es justamente lo correcto y esperado.
+        tasas_declaradas.update(extraer_tasas_declaradas(df, mapeo_hoja))
 
-    return variables
+    return variables, tasas_declaradas

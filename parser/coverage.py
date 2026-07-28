@@ -26,6 +26,14 @@ class VariableValue:
     fuente: str            # "migracion_excel" | "migracion_foto" | "wizard" | "sistema" | "confirmado_por_dueno"
     confianza: float = 1.0  # 0-1. Baja confianza => se muestra como sugerencia a confirmar, no se da por hecho.
     archivo_origen: Optional[str] = None  # nombre de archivo, o "wizard"/"sistema" si no viene de un archivo
+    # Dimensión de período (plan de confiabilidad, hallazgo 1.1 y 4): si la
+    # fuente traía una columna de período, `serie` guarda {período: valor}
+    # de TODOS los períodos reales (la fila TOTAL/Promedio ya se excluyó en
+    # el extractor). `valor` siempre es el período VIGENTE (el más
+    # reciente de `serie`) — nunca un promedio de todo el rango — así las
+    # 20 fórmulas de schema.py, que solo conocen `.valor`, no se tocan.
+    serie: Optional[dict[str, Any]] = None
+    periodo: Optional[str] = None  # etiqueta del período que representa `valor` (ej. "Abril 2026")
 
 
 @dataclass
@@ -41,8 +49,37 @@ class CoverageResult:
     kpis_bloqueados_por_diseno: list[int] = field(default_factory=list)  # variables internas, no se piden nunca
     kpis_esperando_facturas: list[int] = field(default_factory=list)     # variables financieras, solo migración
     kpis_esperando_resolucion_conflicto: dict[int, list[str]] = field(default_factory=dict)  # id -> variables en conflicto
+    kpis_con_error: dict[int, str] = field(default_factory=dict)         # id -> motivo (nunca se traga en silencio)
     variables_pendientes: list[str] = field(default_factory=list)        # deduplicadas, listas para el wizard
     variables_baja_confianza: list[str] = field(default_factory=list)    # para confirmar, no repreguntar desde cero
+
+
+def _calcular_serie_kpi(kpi, variables: dict[str, VariableValue], requeridas: list[str]) -> Optional[dict]:
+    """
+    Si TODAS las variables que requiere el KPI traen serie histórica, arma
+    la serie del KPI aplicando la misma fórmula en cada período común —
+    esto es lo que le permite al agente de interpretación (Fase 4) razonar
+    sobre tendencia ("pasaste de X a Y") en vez de un solo número aislado
+    (hallazgo 4 del informe de deficiencias).
+    """
+    series = {k: variables[k].serie for k in requeridas}
+    if not all(series.values()):
+        return None
+    periodos_comunes = set.intersection(*(set(s.keys()) for s in series.values()))
+    if not periodos_comunes:
+        return None
+    # Orden cronológico: se toma del orden de la serie de la primera
+    # variable (ya viene en orden de aparición, no alfabético — ver
+    # excel_parser._construir_serie_periodo).
+    orden = [p for p in next(iter(series.values())) if p in periodos_comunes]
+    resultado = {}
+    for periodo in orden:
+        payload = {k: series[k][periodo] for k in requeridas}
+        try:
+            resultado[periodo] = kpi.calcular(payload)
+        except Exception:
+            continue
+    return resultado or None
 
 
 def evaluar_cobertura(
@@ -88,11 +125,15 @@ def evaluar_cobertura(
         payload = {k: variables[k].valor for k in requeridas}
         try:
             valor = kpi.calcular(payload)
-        except Exception:
+        except Exception as e:
             # Un valor con forma inesperada (ej. un extractor que guardó un
             # escalar donde la fórmula espera un dict) no debe tirar abajo
-            # toda la migración — ese KPI puntual queda sin calcular y el
-            # resto sigue procesándose normalmente.
+            # toda la migración — pero tampoco puede desaparecer en
+            # silencio: queda registrado en kpis_con_error para que se
+            # pueda auditar qué pasó, en vez de que el KPI simplemente no
+            # aparezca sin explicación (deuda que dejó el fix original de
+            # este try/except — ver plan de confiabilidad del agente).
+            resultado.kpis_con_error[kpi.id] = f"{type(e).__name__}: {e}"
             continue
         confianza_min = min(variables[k].confianza for k in requeridas)
 
@@ -102,6 +143,7 @@ def evaluar_cobertura(
             "unidad": kpi.unidad,
             "confianza": confianza_min,
             "fuentes": sorted({variables[k].fuente for k in requeridas}),
+            "serie": _calcular_serie_kpi(kpi, variables, requeridas),
         }
         if confianza_min < 0.7:
             resultado.variables_baja_confianza.extend(

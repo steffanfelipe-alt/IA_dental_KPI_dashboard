@@ -11,7 +11,8 @@ Separado de pipeline.py para poder testear la lógica de resolución sin
 depender de los extractores ni de Claude.
 """
 
-from typing import Any
+from dataclasses import replace
+from typing import Any, Optional
 
 from coverage import Conflicto, VariableValue
 
@@ -43,6 +44,70 @@ def _candidato(valor: VariableValue) -> dict:
     }
 
 
+def _resolver_por_periodo(candidatos: list[VariableValue], var: str) -> tuple[Optional[VariableValue], Optional[Conflicto]]:
+    """
+    Cuando TODOS los candidatos de una variable traen `.serie`, comparar
+    solo el escalar `.valor` no tiene sentido: dos archivos que cubren
+    rangos de meses distintos (ej. uno enero-abril, otro mayo-junio) no
+    están compitiendo por el mismo dato, están aportando partes distintas
+    de la misma historia — mezclarlos por el `.valor` a secas los haría
+    parecer un conflicto cuando no lo es. Acá se resuelve período por
+    período (unión de todos los períodos de todos los candidatos) con la
+    misma regla de empate que el resto del módulo, y el resultado es una
+    serie fusionada + el último período como valor vigente.
+    """
+    todos_los_periodos: list[str] = []
+    for c in candidatos:
+        for p in c.serie:
+            if p not in todos_los_periodos:
+                todos_los_periodos.append(p)
+
+    serie_resuelta: dict[str, Any] = {}
+    confianza_por_periodo: dict[str, float] = {}
+    fuente_por_periodo: dict[str, str] = {}
+
+    for periodo in todos_los_periodos:
+        candidatos_del_periodo = [c for c in candidatos if periodo in c.serie]
+        mejor_por_valor: dict[Any, VariableValue] = {}
+        for c in candidatos_del_periodo:
+            clave = _clave_comparable(c.serie[periodo])
+            actual = mejor_por_valor.get(clave)
+            if actual is None or c.confianza > actual.confianza:
+                mejor_por_valor[clave] = c
+
+        if len(mejor_por_valor) == 1:
+            ganador = next(iter(mejor_por_valor.values()))
+        else:
+            ordenados = sorted(mejor_por_valor.values(), key=lambda c: c.confianza, reverse=True)
+            mayor, segunda = ordenados[0], ordenados[1]
+            if round(mayor.confianza - segunda.confianza, 9) < UMBRAL_EMPATE:
+                # Conflicto real para este período: no se resuelve nada de
+                # la variable (misma granularidad que el resto del
+                # sistema — un conflicto es por variable, no por período).
+                conflicto = Conflicto(
+                    variable=var,
+                    candidatos=[
+                        _candidato(replace(c, valor=c.serie[periodo]))
+                        for c in sorted(candidatos_del_periodo, key=lambda c: c.confianza, reverse=True)
+                    ],
+                )
+                return None, conflicto
+            ganador = mayor
+
+        serie_resuelta[periodo] = ganador.serie[periodo]
+        confianza_por_periodo[periodo] = ganador.confianza
+        fuente_por_periodo[periodo] = ganador.fuente
+
+    if not serie_resuelta:
+        return None, None
+    ultimo = todos_los_periodos[-1]
+    resuelto = VariableValue(
+        valor=serie_resuelta[ultimo], fuente=fuente_por_periodo[ultimo],
+        confianza=confianza_por_periodo[ultimo], serie=serie_resuelta, periodo=ultimo,
+    )
+    return resuelto, None
+
+
 def resolver_conflictos(
     fuentes: list[dict[str, VariableValue]],
 ) -> tuple[dict[str, VariableValue], list[Conflicto]]:
@@ -71,9 +136,17 @@ def resolver_conflictos(
             resueltas[var] = confirmado
             continue
 
-        # Mejor candidato por cada valor distinto propuesto — así, si dos
-        # archivos ya están de acuerdo en un valor, no importa que un
-        # tercero (con menos confianza) proponga otra cosa distinta.
+        if all(c.serie for c in candidatos):
+            resuelto, conflicto = _resolver_por_periodo(candidatos, var)
+            if conflicto is not None:
+                conflictos.append(conflicto)
+            elif resuelto is not None:
+                resueltas[var] = resuelto
+            continue
+
+        # Al menos un candidato no trae serie (dato de una sola foto,
+        # wizard, o un extractor que no pudo identificar período): se
+        # compara el escalar `.valor` como antes.
         mejor_por_valor: dict[Any, VariableValue] = {}
         for c in candidatos:
             clave = _clave_comparable(c.valor)

@@ -25,6 +25,10 @@ from typing import Any, Optional
 from schema import KPI_BY_ID
 from coverage import VariableValue, evaluar_cobertura, variables_para_wizard
 from conflictos import resolver_conflictos
+from validacion import validar_variable, validar_identidades
+from reconciliacion import reconciliar
+from derivacion import derivar_variables_faltantes
+import segunda_lectura
 from extractors import excel_parser, vision_parser
 
 
@@ -40,14 +44,113 @@ EXTRACTOR_POR_EXTENSION = {
 }
 
 
-def extraer_archivo(path: str, client=None) -> dict[str, VariableValue]:
+def extraer_archivo(path: str, client=None) -> tuple[dict[str, VariableValue], dict[int, object]]:
+    """
+    Devuelve (variables, tasas_declaradas). No todos los extractores
+    conocen tasas_declaradas (hoy solo excel_parser, ver reconciliacion.py
+    — vision_parser sigue devolviendo solo variables): se normaliza acá
+    para que pipeline.py no necesite saber qué extractor se usó.
+    """
     ext = Path(path).suffix.lower()
     extractor = EXTRACTOR_POR_EXTENSION.get(ext)
     if extractor is None:
         raise ValueError(f"Formato no soportado: {ext}. Soportados: {list(EXTRACTOR_POR_EXTENSION)}")
-    variables = extractor(path, client)
+    resultado = extractor(path, client)
+    if isinstance(resultado, tuple):
+        variables, tasas_declaradas = resultado
+    else:
+        variables, tasas_declaradas = resultado, {}
     nombre_archivo = Path(path).name
-    return {var: replace(valor, archivo_origen=nombre_archivo) for var, valor in variables.items()}
+    variables = {var: replace(valor, archivo_origen=nombre_archivo) for var, valor in variables.items()}
+    return variables, tasas_declaradas
+
+
+def _filtrar_por_validacion(
+    variables: dict[str, VariableValue],
+) -> tuple[dict[str, VariableValue], dict[str, dict]]:
+    """
+    Corre las guardas de validacion.py sobre lo que salió de
+    resolver_conflictos. Lo que no pasa NO se descarta en silencio: sale
+    del dict `variables` (así evaluar_cobertura lo trata como si faltara,
+    y el wizard lo vuelve a preguntar) y queda documentado en
+    `variables_en_cuarentena` con el motivo del rechazo, para poder
+    auditar qué pasó en vez de que el dato quede simplemente ausente sin
+    explicación.
+    """
+    aceptadas: dict[str, VariableValue] = {}
+    cuarentena: dict[str, dict] = {}
+
+    for var, vv in variables.items():
+        motivo = validar_variable(var, vv.valor, vv.fuente)
+        if motivo:
+            cuarentena[var] = {"valor": vv.valor, "fuente": vv.fuente, "motivo": motivo}
+        else:
+            aceptadas[var] = vv
+
+    escalares = {v: vv.valor for v, vv in aceptadas.items() if isinstance(vv.valor, (int, float))}
+    for rechazo in validar_identidades(escalares):
+        vv = aceptadas.pop(rechazo.variable, None)
+        if vv is not None:
+            cuarentena[rechazo.variable] = {"valor": vv.valor, "fuente": vv.fuente, "motivo": rechazo.motivo}
+
+    return aceptadas, cuarentena
+
+
+def _segunda_lectura_para_variables_dudosas(
+    variables: dict[str, VariableValue],
+    variables_ya_reconciliadas: set[str],
+    archivos: list[str],
+    client,
+) -> dict[str, VariableValue]:
+    """
+    Última red del plan de confiabilidad (Fase 3): lo que queda con
+    confianza baja y que reconciliacion.py no pudo cruzar contra una tasa
+    declarada se manda a una segunda lectura independiente
+    (segunda_lectura.py). Si coincide, sube la confianza; si no, se
+    deja la confianza baja tal cual — no se elige a ciegas cuál lectura es
+    la correcta, eso ya lo muestra el sistema como "a confirmar"
+    (variables_a_confirmar en el payload final).
+    """
+    if client is None:
+        return variables
+
+    a_verificar = segunda_lectura.variables_a_verificar(variables, variables_ya_reconciliadas)
+    if not a_verificar:
+        return variables
+
+    archivo_por_nombre = {Path(a).name: a for a in archivos}
+    grids_cache: dict[str, list[dict]] = {}
+
+    por_hoja: dict[tuple[str, Optional[str]], list[str]] = {}
+    for var in a_verificar:
+        vv = variables[var]
+        if not vv.archivo_origen or vv.archivo_origen not in archivo_por_nombre:
+            continue
+        hoja = vv.fuente.split(":", 1)[1] if ":" in vv.fuente else None
+        por_hoja.setdefault((vv.archivo_origen, hoja), []).append(var)
+
+    variables = dict(variables)
+    for (nombre_archivo, hoja), vars_de_hoja in por_hoja.items():
+        path = archivo_por_nombre[nombre_archivo]
+        if path not in grids_cache:
+            try:
+                grids_cache[path] = excel_parser.leer_hojas_crudas(path)
+            except Exception:
+                grids_cache[path] = []
+        hojas = grids_cache[path]
+        if not hojas:
+            continue
+        grid = next((h["grid"] for h in hojas if h.get("hoja") == hoja), hojas[0]["grid"])
+
+        try:
+            lecturas = segunda_lectura.pedir_segunda_lectura(grid, vars_de_hoja, client)
+        except Exception:
+            continue
+        confianza_actualizada, _discrepancias = segunda_lectura.contrastar(variables, lecturas)
+        for var, nueva_confianza in confianza_actualizada.items():
+            variables[var] = replace(variables[var], confianza=nueva_confianza)
+
+    return variables
 
 
 def procesar_migracion(
@@ -69,9 +172,60 @@ def procesar_migracion(
         "variables": {...}                      # snapshot completo para guardar en la DB
       }
     """
-    extraidas = [extraer_archivo(a, client) for a in archivos]
+    extraidas_por_archivo = [extraer_archivo(a, client) for a in archivos]
+    extraidas = [variables for variables, _ in extraidas_por_archivo]
+    tasas_declaradas: dict[int, object] = {}
+    for _, tasas in extraidas_por_archivo:
+        tasas_declaradas.update(tasas)
+
     variables, conflictos = resolver_conflictos([variables_previas or {}, *extraidas])
+    variables, variables_en_cuarentena = _filtrar_por_validacion(variables)
     variables_en_conflicto = {c.variable for c in conflictos}
+
+    # Reconciliación (Fase 3, hallazgo E): recalcula cada tasa % con las
+    # variables ya aceptadas y la compara contra la que la propia planilla
+    # declara. Lo que no cierra se pone en cuarentena — esto atrapa el
+    # caso real donde un conteo pasa todas las guardas de tipo/rango pero
+    # implica una tasa que no tiene nada que ver con la que la hoja
+    # declara al lado (ej. no_shows mal mapeado).
+    a_cuarentena_reconciliacion, discrepancias = reconciliar(variables, tasas_declaradas)
+    for var in a_cuarentena_reconciliacion:
+        vv = variables.pop(var, None)
+        if vv is not None:
+            variables_en_cuarentena[var] = {
+                "valor": vv.valor, "fuente": vv.fuente,
+                "motivo": (
+                    f"la tasa declarada en la planilla no coincide con lo calculado "
+                    f"a partir de esta variable (ver discrepancias_reconciliacion)"
+                ),
+            }
+
+    # Derivación (punto 1 del plan de cierre): completa una variable que la
+    # planilla no trae como columna cruda pero que se despeja de una tasa
+    # que sí trae calculada (ej. no_shows desde "Tasa no-show" × turnos).
+    # Va DESPUÉS de reconciliar a propósito: una variable derivada
+    # satisface la identidad de su tasa por construcción, así que dejarla
+    # entrar antes haría que ese KPI cerrara siempre y diera por
+    # corroborada a su compañera sin verificarla nunca.
+    nuevas_derivadas, derivaciones = derivar_variables_faltantes(variables, tasas_declaradas)
+    variables.update(nuevas_derivadas)
+
+    # Si una variable había caído en cuarentena y después se pudo derivar,
+    # se deja el registro (es la traza de auditoría: "el 57 extraído se
+    # rechazó") pero marcado como reemplazado, para que el panel no muestre
+    # el rechazo y el valor nuevo como si se contradijeran.
+    for var in nuevas_derivadas:
+        if var in variables_en_cuarentena:
+            variables_en_cuarentena[var]["reemplazada_por_derivacion"] = True
+            variables_en_cuarentena[var]["motivo"] += " — reemplazada por un valor derivado de la tasa"
+
+    variables_ya_reconciliadas = {
+        v for kpi_id in tasas_declaradas if kpi_id in KPI_BY_ID for v in KPI_BY_ID[kpi_id].variables
+    }
+    # Las derivadas no se releen: no están escritas en la hoja (son un
+    # despeje), así que una segunda lectura no tendría de dónde sacarlas.
+    variables_ya_reconciliadas |= set(nuevas_derivadas)
+    variables = _segunda_lectura_para_variables_dudosas(variables, variables_ya_reconciliadas, archivos, client)
 
     cobertura = evaluar_cobertura(variables, variables_en_conflicto)
     preguntas = variables_para_wizard(cobertura)
@@ -85,6 +239,22 @@ def procesar_migracion(
         "kpis_bloqueados_por_diseno": cobertura.kpis_bloqueados_por_diseno,
         "kpis_esperando_facturas": cobertura.kpis_esperando_facturas,
         "kpis_esperando_resolucion_conflicto": cobertura.kpis_esperando_resolucion_conflicto,
+        "kpis_con_error": cobertura.kpis_con_error,
+        "variables_en_cuarentena": variables_en_cuarentena,
+        "variables_derivadas": [
+            {
+                "variable": d.variable, "valor": d.valor, "kpi_id": d.kpi_id,
+                "desde_denominador": d.desde_denominador, "tasa_declarada": d.tasa_declarada,
+            }
+            for d in derivaciones
+        ],
+        "discrepancias_reconciliacion": [
+            {
+                "kpi_id": d.kpi_id, "kpi_nombre": d.kpi_nombre,
+                "calculado": d.calculado, "declarado": d.declarado, "variables": d.variables,
+            }
+            for d in discrepancias
+        ],
         "preguntas_wizard": preguntas,
         "conflictos_pendientes": [
             {

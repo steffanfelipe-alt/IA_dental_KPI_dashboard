@@ -1,0 +1,16 @@
+fecha_presupuesto,id_paciente,tratamiento,monto_ars,estado
+2026-03-01,P1000,Conducto + corona,199000,pendiente
+2026-03-01,P1001,Ortodoncia (plan completo),578000,pendiente
+2026-03-01,P1002,Ortodoncia (plan completo),617000,aceptado
+2026-03-01,P1003,Ortodoncia (plan completo),513000,aceptado
+2026-03-01,P1004,Protesis removible,270000,aceptado
+2026-03-01,P1005,Limpieza + arreglos varios,130000,pendiente
+2026-03-01,P1006,Extraccion + implante,444000,aceptado
+2026-03-01,P1007,Ortodoncia (plan completo),613000,aceptado
+2026-03-01,P1008,Limpieza + arreglos varios,109000,aceptado
+2026-03-01,P1009,Conducto + corona,284000,pendiente
+2026-03-01,P1010,Conducto + corona,273000,aceptado
+2026-03-01,P1011,Conducto + corona,307000,aceptado
+2026-03-01,P1012,Implante unitario,445000,pendiente
+2026-03-01,P1013,Conducto + corona,248000,aceptado
+2026-03-01,P1014,Ortodoncia (plan completo),521000,aceptado

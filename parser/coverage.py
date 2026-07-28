@@ -86,7 +86,14 @@ def evaluar_cobertura(
             continue
 
         payload = {k: variables[k].valor for k in requeridas}
-        valor = kpi.calcular(payload)
+        try:
+            valor = kpi.calcular(payload)
+        except Exception:
+            # Un valor con forma inesperada (ej. un extractor que guardó un
+            # escalar donde la fórmula espera un dict) no debe tirar abajo
+            # toda la migración — ese KPI puntual queda sin calcular y el
+            # resto sigue procesándose normalmente.
+            continue
         confianza_min = min(variables[k].confianza for k in requeridas)
 
         resultado.kpis_calculados[kpi.id] = {

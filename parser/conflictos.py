@@ -19,6 +19,21 @@ from coverage import Conflicto, VariableValue
 UMBRAL_EMPATE = 0.1
 
 
+def _clave_comparable(valor: Any) -> Any:
+    """Representación hasheable de un valor para agruparlo por igualdad.
+
+    Variables tipo dict (ej. horas_tarea_manual_semana) o list (ej.
+    tareas_sin_backup) no se pueden usar directo como clave de dict porque
+    no son hasheables — acá se convierten a una tupla ordenada equivalente,
+    sin tocar el valor real que se termina guardando en VariableValue.
+    """
+    if isinstance(valor, dict):
+        return tuple(sorted(valor.items()))
+    if isinstance(valor, list):
+        return tuple(valor)
+    return valor
+
+
 def _candidato(valor: VariableValue) -> dict:
     return {
         "valor": valor.valor,
@@ -61,9 +76,10 @@ def resolver_conflictos(
         # tercero (con menos confianza) proponga otra cosa distinta.
         mejor_por_valor: dict[Any, VariableValue] = {}
         for c in candidatos:
-            mejor_actual = mejor_por_valor.get(c.valor)
+            clave = _clave_comparable(c.valor)
+            mejor_actual = mejor_por_valor.get(clave)
             if mejor_actual is None or c.confianza > mejor_actual.confianza:
-                mejor_por_valor[c.valor] = c
+                mejor_por_valor[clave] = c
 
         if len(mejor_por_valor) == 1:
             resueltas[var] = next(iter(mejor_por_valor.values()))

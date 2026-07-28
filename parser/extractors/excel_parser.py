@@ -40,6 +40,8 @@ except ImportError:  # pragma: no cover
 MODEL = "claude-sonnet-5"
 FILAS_PREVIEW = 10
 
+VARIABLES_DICT = sorted(v for v, t in VARIABLE_TYPES.items() if t == "dict")
+
 SYSTEM_PROMPT = f"""Sos un normalizador de datos para clínicas dentales argentinas.
 Te paso, por cada hoja de un Excel (o la única hoja implícita de un CSV),
 una vista cruda de sus primeras {FILAS_PREVIEW} filas — SIN asumir dónde
@@ -55,6 +57,33 @@ Tu trabajo, por cada hoja:
    variables (o null si ninguna aplica):
 
 {json.dumps(list(VARIABLE_TYPES.keys()), ensure_ascii=False, indent=2)}
+
+   Estas variables en particular NO son un número suelto: son un
+   desglose por categoría (ej. horas por tarea, ingreso por tipo de
+   tratamiento, ingreso por paciente):
+
+{json.dumps(VARIABLES_DICT, ensure_ascii=False, indent=2)}
+
+   Cuando mapees una columna a una de estas, indicá también
+   "columna_categoria_index": el índice de la columna que da la
+   categoría por la que agrupar (nombre de tarea, tipo de tratamiento,
+   o paciente, según corresponda). Si la hoja SÍ tiene una columna así
+   (por ejemplo, una fila por transacción con su tipo de tratamiento),
+   usala. Si la hoja solo te da un total ya agregado para esa variable,
+   sin ninguna columna que sirva de categoría, mapeá igual pero sin
+   "columna_categoria_index" — se va a guardar como un desglose de una
+   sola categoría ("total").
+
+   Ojo con un caso distinto: una hoja "larga" donde cada FILA es una
+   MÉTRICA distinta (ej. una columna "Métrica" con nombres como "Horas/
+   semana en tareas repetitivas", "% de tareas automatizadas", etc., y
+   una columna "Valor" al lado). Ahí las filas no son categorías de una
+   misma variable — cada una es una variable distinta. En ese caso usá
+   "condicion" para quedarte solo con la fila que corresponde (ej.
+   condicion: "Metrica == 'Horas/semana de recepcion en tareas
+   repetitivas'") y NO indiques "columna_categoria_index" — vas a
+   terminar con el desglose de una sola clave "total" correcto, en vez
+   de mezclar valores de métricas que no tienen nada que ver entre sí.
 
 Aclaración sobre una variable fácil de confundir:
 - "tiempo_respuesta_promedio_min" es cuánto tarda LA CLÍNICA en responder
@@ -87,7 +116,9 @@ Reglas generales:
       "fila_encabezado": 0,
       "mapeo": [
         {{"columna_index": 0, "variable": "...", "agregacion": "sum|count|count_where|avg",
-          "condicion": "opcional, ej. estado == 'no show'", "confianza": 0.0-1.0}}
+          "condicion": "opcional, ej. estado == 'no show'",
+          "columna_categoria_index": "opcional, solo para variables de tipo dict",
+          "confianza": 0.0-1.0}}
       ],
       "columnas_sin_mapeo": [1, 3]
     }}
@@ -137,6 +168,62 @@ def _releer_con_encabezado(path: str, hoja: Optional[str], fila_encabezado: int)
     return pd.read_excel(path, sheet_name=hoja, header=fila_encabezado)
 
 
+def _agregar_escalar(serie: pd.Series, agregacion: str) -> Optional[float]:
+    if agregacion == "sum":
+        return float(pd.to_numeric(serie, errors="coerce").sum())
+    if agregacion == "count":
+        return int(serie.count())
+    if agregacion == "count_where":
+        return int(len(serie))
+    if agregacion == "avg":
+        return float(pd.to_numeric(serie, errors="coerce").mean())
+    return None
+
+
+def _agregar_dict(
+    df_filtrado: pd.DataFrame,
+    col_valor: str,
+    idx_categoria: Optional[int],
+    columnas_originales: pd.Index,
+    agregacion: str,
+) -> Optional[dict]:
+    """Arma el desglose {categoria: valor} para una variable tipo dict.
+
+    Si no hay columna de categoría (la hoja solo da un total ya agregado),
+    se devuelve un desglose de una sola clave "total" en vez de un escalar
+    suelto — así el valor sigue siendo compatible con lo que esperan las
+    fórmulas de schema.py (que siempre iteran sobre .values()).
+    """
+    valores = pd.to_numeric(df_filtrado[col_valor], errors="coerce")
+
+    if idx_categoria is None or idx_categoria >= len(columnas_originales):
+        total = valores.mean() if agregacion == "avg" else valores.sum()
+        if pd.isna(total):
+            return None
+        return {"total": round(float(total), 2)}
+
+    col_categoria = columnas_originales[idx_categoria]
+    if col_categoria not in df_filtrado.columns or col_categoria == col_valor:
+        return None
+
+    categorias = df_filtrado[col_categoria].astype(str).str.strip()
+    agrupado = valores.groupby(categorias)
+    if agregacion == "avg":
+        resultado = agrupado.mean()
+    elif agregacion in ("count", "count_where"):
+        resultado = agrupado.count()
+    else:
+        resultado = agrupado.sum()
+
+    resultado = resultado.dropna()
+    desglose = {
+        str(k): round(float(v), 2)
+        for k, v in resultado.items()
+        if str(k) and str(k).lower() != "nan"
+    }
+    return desglose or None
+
+
 def aplicar_mapeo(
     df: pd.DataFrame,
     mapeo_hoja: dict,
@@ -153,23 +240,28 @@ def aplicar_mapeo(
             continue
         col = df.columns[idx]
 
-        serie = df[col]
+        df_filtrado = df
         if regla.get("condicion"):
             try:
-                serie = df.query(regla["condicion"])[col]
+                df_filtrado = df.query(regla["condicion"])
             except Exception:
                 pass  # condición no aplicable con pandas.query, se ignora esa regla puntual
 
         agregacion = regla.get("agregacion", "sum")
-        if agregacion == "sum":
-            valor = float(pd.to_numeric(serie, errors="coerce").sum())
-        elif agregacion == "count":
-            valor = int(serie.count())
-        elif agregacion == "count_where":
-            valor = int(len(serie))
-        elif agregacion == "avg":
-            valor = float(pd.to_numeric(serie, errors="coerce").mean())
+        tipo_var = VARIABLE_TYPES.get(var)
+
+        if tipo_var == "dict":
+            valor = _agregar_dict(df_filtrado, col, regla.get("columna_categoria_index"), df.columns, agregacion)
         else:
+            valor = _agregar_escalar(df_filtrado[col], agregacion)
+
+        if valor is None:
+            continue
+        # Guarda defensiva: nunca guardar un tipo que no coincide con lo que
+        # espera VARIABLE_TYPES — esto es lo que hasta ahora dejaba pasar un
+        # float suelto para variables tipo dict (ej. horas_tarea_manual_semana)
+        # y hacía explotar las fórmulas de schema.py más adelante.
+        if isinstance(valor, dict) != (tipo_var == "dict"):
             continue
 
         # Si dos columnas (de la misma hoja o de hojas distintas) mapean a

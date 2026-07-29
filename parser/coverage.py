@@ -90,9 +90,18 @@ def _calcular_serie_kpi(kpi, variables: dict[str, VariableValue], requeridas: li
     for periodo in orden:
         payload = {k: series[k][periodo] for k in requeridas}
         try:
-            resultado[periodo] = kpi.calcular(payload)
+            valor = kpi.calcular(payload)
         except Exception:
             continue
+        # Un KPI porcentual (_pct en schema.py) devuelve None, no una
+        # excepción, cuando el denominador de ESE período fue 0 (ej. un
+        # mes sin turnos agendados) — no lo guarda como "el valor de ese
+        # período es None": lo salta, igual que un período que tira
+        # excepción. Guardar None colaba un valor no numérico en la serie
+        # (bug real: agregados.calcular_agregado(..., "ultimo") explotaba
+        # si ese período resultaba ser el más reciente).
+        if valor is not None:
+            resultado[periodo] = valor
     return resultado or None
 
 

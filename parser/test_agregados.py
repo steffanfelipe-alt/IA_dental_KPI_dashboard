@@ -60,6 +60,15 @@ def test_suma_y_ultimo():
     assert calcular_agregado(serie, "ultimo") == 30  # confía en el orden del dict
 
 
+def test_ultimo_saltea_none_al_final_de_la_serie():
+    # Bug real encontrado probando con datos reales: un KPI porcentual
+    # (_pct) devuelve None para un período cuyo denominador dio 0 (ej. un
+    # mes sin turnos agendados). Si ese período es el más reciente,
+    # "ultimo" no debe explotar — tiene que saltear al último numérico.
+    serie = {"2026-01": 10, "2026-02": 20, "2026-03": None}
+    assert calcular_agregado(serie, "ultimo") == 20
+
+
 def test_agregado_ignora_valores_no_numericos_sin_romper():
     # KPIs 19/20: el valor por período es un dict, no un escalar.
     serie = {"2026-01": {"a": 1}, "2026-02": {"a": 2}}

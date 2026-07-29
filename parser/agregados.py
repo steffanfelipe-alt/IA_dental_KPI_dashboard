@@ -48,10 +48,17 @@ def calcular_agregado(serie: dict, metodo: str = "promedio") -> Optional[float]:
     if metodo == "suma":
         return round(sum(valores), 4)
     if metodo == "ultimo":
-        # Confía en el orden de inserción del dict, igual que
-        # VariableValue.valor — el llamador es responsable de pasar una
-        # serie ya ordenada cronológicamente (ver periodos.orden_cronologico).
-        return round(float(list(serie.values())[-1]), 4)
+        # Usa `valores` (ya filtrado), NO serie.values() crudo: un KPI
+        # porcentual (_pct en schema.py) devuelve None para un período
+        # cuyo denominador dio 0 — ej. un mes sin turnos agendados. Si ese
+        # período resulta ser el más reciente, tomar serie.values()[-1] a
+        # ciegas explota con TypeError en vez de saltear al último valor
+        # realmente numérico (bug real, encontrado probando con datos
+        # reales — no una hipótesis). Confía en el orden de inserción del
+        # dict, igual que VariableValue.valor — el llamador es responsable
+        # de pasar una serie ya ordenada cronológicamente (ver
+        # periodos.orden_cronologico).
+        return round(float(valores[-1]), 4)
     raise ValueError(f"método de agregación desconocido: {metodo!r}")
 
 

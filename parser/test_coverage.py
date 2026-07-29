@@ -43,6 +43,32 @@ def test_kpi_sin_serie_en_alguna_variable_no_arma_serie():
     assert resultado.kpis_calculados[3]["serie"] is None
 
 
+def test_periodo_con_denominador_cero_no_queda_como_none_en_la_serie():
+    # Bug real (encontrado probando con datos reales vía Streamlit): un
+    # mes sin consultas_nuevas_mes da denominador 0 -> _pct devuelve None
+    # para ESE período. Antes del fix, ese None quedaba guardado en
+    # serie_kpi y agregados.calcular_agregado(..., "ultimo") explotaba si
+    # justo era el período más reciente. El período debe faltar de la
+    # serie, no aparecer con valor None.
+    variables = {
+        "turnos_agendados": VariableValue(
+            73, "migracion_excel", 0.9,
+            serie={"2026-01": 66.0, "2026-02": 62.0, "2026-03": 0.0}, periodo="2026-03",
+        ),
+        "consultas_nuevas_mes": VariableValue(
+            0, "migracion_excel", 0.9,
+            serie={"2026-01": 95.0, "2026-02": 88.0, "2026-03": 0.0}, periodo="2026-03",
+        ),
+    }
+    resultado = evaluar_cobertura(variables)
+    serie_kpi3 = resultado.kpis_calculados[3]["serie"]
+    assert "2026-03" not in serie_kpi3, "el período con denominador 0 no debe colarse como None"
+    assert serie_kpi3 == {"2026-01": round(100 * 66 / 95, 1), "2026-02": round(100 * 62 / 88, 1)}
+
+    # Y el agregado "ultimo" no explota: salta al último período real.
+    assert resultado.kpis_calculados[3]["agregados"]["ultimo"] == round(100 * 62 / 88, 1)
+
+
 def test_serie_de_kpi_intersecta_entre_archivos_con_etiquetas_de_periodo_distintas():
     # El hueco real que motivó la Fase 1 (periodos.py): antes de
     # normalizar, un archivo etiquetando "Marzo 2026"/"Abril 2026" y otro

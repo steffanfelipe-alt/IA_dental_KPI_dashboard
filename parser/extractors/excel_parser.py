@@ -492,47 +492,82 @@ def _agregar_dict(
 
 def _construir_serie_periodo(
     df_filtrado: pd.DataFrame, col_valor: str, col_periodo: str, agregacion: str,
-) -> tuple[Optional[dict], dict[str, str]]:
+) -> tuple[Optional[dict], dict[str, str], dict[str, float]]:
     """{período_canónico: valor} para una variable escalar en una hoja con
-    columna de período — la fila TOTAL ya se excluyó antes de llegar acá
-    (ver `aplicar_mapeo`), así que ningún período "fantasma" se cuela.
+    columna de período.
+
+    Dos guardas contra filas que no son un período (bug real, encontrado
+    con una planilla de clínica: la hoja "Financiero" tenía una nota al
+    pie — "Presupuestado = presup. entregados x ticket..." — que se colaba
+    como período y terminaba siendo el VALOR VIGENTE de `monto_cobrado`,
+    o sea throughput = 0):
+
+    1. `min_count=1` en la suma. Sin eso, `groupby().sum()` de un grupo
+       enteramente NaN devuelve 0.0 — un cero fabricado que `dropna()` no
+       filtra porque es un número perfectamente válido. Con min_count=1
+       devuelve NaN y desaparece. Esto sólo cubre la fila basura SIN dato
+       numérico en esta columna.
+    2. `periodos.es_canonico`: una etiqueta que no resuelve a clave
+       canónica no entra a la serie. Cubre el otro caso — la fila basura
+       CON dato numérico, típicamente un TOTAL que el modelo no listó en
+       `filas_excluidas` (hallazgo 1.1). No se descarta en silencio: sale
+       por el tercer elemento del retorno.
+
+    No se puede confiar sólo en `filas_excluidas` para esto: lo llena el
+    modelo, y el prompt le pide excluir TOTAL/Promedio/Subtotal — una nota
+    al pie no es ninguna de esas cosas. La corrección no puede depender de
+    que un LLM enumere exhaustivamente el ruido de cada planilla.
 
     Fase 1 del plan de evolución: la clave ya no es la etiqueta cruda de la
     hoja ("Abril 2026") sino la canónica que arma `periodos.normalizar_periodo`
     ("2026-04") — dos archivos que etiquetan el mismo mes distinto ahora
     intersectan en `coverage._calcular_serie_kpi`, cosa que antes fallaba
-    en silencio (ver docstring del módulo `periodos.py`). Si una etiqueta no
-    se puede interpretar se conserva tal cual (nunca se inventa un período),
-    y el orden final es cronológico por clave canónica (`orden_cronologico`)
-    en vez de depender del orden de aparición de las filas en el archivo.
+    en silencio (ver docstring del módulo `periodos.py`), y el orden final
+    es cronológico por clave canónica (`orden_cronologico`) en vez de
+    depender del orden de aparición de las filas en el archivo.
 
-    Devuelve (serie, etiquetas_originales): `etiquetas_originales` mapea
-    cada clave canónica a la etiqueta cruda tal como venía en la hoja, para
-    poder mostrarla sin perder la clave que hace intersectar series.
+    Devuelve (serie, etiquetas_originales, no_reconocidos):
+      - `etiquetas_originales` mapea cada clave canónica a la etiqueta cruda
+        tal como venía en la hoja, para poder mostrarla sin perder la clave
+        que hace intersectar series.
+      - `no_reconocidos` es {etiqueta_cruda: valor} de las filas rechazadas
+        por la guarda 2. Queda visible para auditar — misma filosofía que
+        `variables_en_cuarentena`: lo dudoso no desaparece en silencio.
+        Si TODAS las etiquetas de la hoja son no canónicas (ej. una planilla
+        rotulada "Semana 1".."Semana 5"), la serie queda vacía y el llamador
+        cae al agregado escalar, que es exactamente lo que ya hace cuando la
+        hoja no declara columna de período.
     """
     valores = pd.to_numeric(df_filtrado[col_valor], errors="coerce")
     periodos_crudos = df_filtrado[col_periodo].astype(str).str.strip()
     agrupado = valores.groupby(periodos_crudos, sort=False)
-    resultado = agrupado.mean() if agregacion == "avg" else agrupado.sum()
+    # min_count=1 (guarda 1): un grupo sin ningún valor numérico debe dar
+    # NaN, no 0.0. `mean()` ya se comporta así por default.
+    resultado = agrupado.mean() if agregacion == "avg" else agrupado.sum(min_count=1)
     resultado = resultado.dropna()
 
     serie: dict[str, float] = {}
     etiquetas_originales: dict[str, str] = {}
+    no_reconocidos: dict[str, float] = {}
     for etiqueta_cruda, valor in resultado.items():
         etiqueta_cruda = str(etiqueta_cruda)
         if not etiqueta_cruda or etiqueta_cruda.lower() == "nan":
             continue
-        clave = periodos.normalizar_periodo(etiqueta_cruda) or etiqueta_cruda
+        clave = periodos.normalizar_periodo(etiqueta_cruda)
+        if clave is None or not periodos.es_canonico(clave):
+            # Guarda 2: no es un período. Visible, nunca elegible como vigente.
+            no_reconocidos[etiqueta_cruda] = round(float(valor), 4)
+            continue
         serie[clave] = round(float(valor), 4)
         etiquetas_originales[clave] = etiqueta_cruda
 
     if not serie:
-        return None, {}
+        return None, {}, no_reconocidos
 
     orden = periodos.orden_cronologico(serie.keys())
     serie_ordenada = {k: serie[k] for k in orden}
     etiquetas_ordenadas = {k: etiquetas_originales[k] for k in orden}
-    return serie_ordenada, etiquetas_ordenadas
+    return serie_ordenada, etiquetas_ordenadas, no_reconocidos
 
 
 def _df_base_y_periodo(df: pd.DataFrame, mapeo_hoja: dict) -> tuple[pd.DataFrame, Optional[str], int]:
@@ -588,7 +623,7 @@ def extraer_tasas_declaradas(df: pd.DataFrame, mapeo_hoja: dict) -> dict[int, "T
 
         serie = None
         if col_periodo is not None:
-            serie, _etiquetas = _construir_serie_periodo(df_base, col, col_periodo, "avg")
+            serie, _etiquetas, _no_reconocidos = _construir_serie_periodo(df_base, col, col_periodo, "avg")
             valor = list(serie.values())[-1] if serie else None
         else:
             no_nulos = valores.dropna()
@@ -668,6 +703,7 @@ def aplicar_mapeo(
             agregacion = "sum"  # una sola celda: sum de 1 fila = esa celda
             serie = None
             etiquetas_originales = None
+            no_reconocidos = {}
         else:
             idx = _a_entero(regla.get("columna_index"))
             if idx is None or idx >= len(df_base.columns):
@@ -689,8 +725,11 @@ def aplicar_mapeo(
             agregacion = regla.get("agregacion", "sum")
             serie = None
             etiquetas_originales = None
+            no_reconocidos = {}
             if col_periodo is not None and tipo_var in ("int", "float"):
-                serie, etiquetas_originales = _construir_serie_periodo(df_filtrado, col, col_periodo, agregacion)
+                serie, etiquetas_originales, no_reconocidos = _construir_serie_periodo(
+                    df_filtrado, col, col_periodo, agregacion,
+                )
 
         if tipo_var == "dict":
             resolver_categoria = None
@@ -756,6 +795,7 @@ def aplicar_mapeo(
             valor=valor, fuente=fuente, confianza=regla.get("confianza", 0.8),
             serie=serie, periodo=(list(serie.keys())[-1] if serie else None),
             etiquetas_originales=etiquetas_originales,
+            periodos_no_reconocidos=no_reconocidos or None,
             trazabilidad=traza,
         )
         existente = variables.get(var)

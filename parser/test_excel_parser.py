@@ -284,6 +284,77 @@ def test_ingreso_por_tratamiento_nunca_pasa_por_matching_de_pacientes():
     assert len(variables["ingreso_por_tratamiento"].valor) == 2
 
 
+# ---------------------------------------------------------------------------
+# Regresión: filas que no son un período no pueden ser el valor vigente.
+# Bug real (planilla "clinica_sonrisas"): la nota al pie de la hoja Financiero
+# entraba a la serie como período, quedaba última al ordenar (ASCII pone 'P'
+# después de '2') y se elegía como vigente -> throughput = 0.
+# ---------------------------------------------------------------------------
+
+def _mapeo_con_periodo(mapeo: list[dict]) -> dict:
+    return {"hoja": None, "fila_encabezado": 0, "orientacion": "periodos_en_filas",
+            "columna_periodo": 0, "mapeo": mapeo}
+
+
+def test_nota_al_pie_sin_dato_no_se_cuela_como_periodo_con_valor_cero():
+    """Guarda 1 (min_count): un grupo enteramente NaN debe dar NaN, no 0.0."""
+    df = pd.DataFrame({
+        "mes": ["Enero 2026", "Febrero 2026", "Cobro = cobrado / facturado."],
+        "cobrado": [4460000, 4200000, None],
+    })
+    vv = aplicar_mapeo(df, _mapeo_con_periodo([
+        {"columna_index": 1, "variable": "monto_cobrado", "agregacion": "sum", "confianza": 0.9},
+    ]))["monto_cobrado"]
+
+    assert vv.valor == 4200000.0, "el vigente debe ser el último mes real, no la nota al pie"
+    assert vv.periodo == "2026-02"
+    assert list(vv.serie) == ["2026-01", "2026-02"], "la nota no debe existir como período"
+
+
+def test_fila_total_con_dato_real_no_entra_a_la_serie_pero_queda_visible():
+    """Guarda 2 (es_canonico): cubre el caso que min_count no puede — una fila
+    basura CON número, típicamente un TOTAL que el modelo no listó en
+    filas_excluidas."""
+    df = pd.DataFrame({
+        "mes": ["Enero 2026", "Febrero 2026", "TOTAL / Prom."],
+        "consultas": [95, 88, 183],
+    })
+    vv = aplicar_mapeo(df, _mapeo_con_periodo([
+        {"columna_index": 1, "variable": "consultas_nuevas_mes", "agregacion": "sum", "confianza": 0.9},
+    ]))["consultas_nuevas_mes"]
+
+    assert vv.valor == 88.0, "el TOTAL nunca puede ser el valor vigente"
+    assert "TOTAL / Prom." not in (vv.serie or {})
+    assert vv.periodos_no_reconocidos == {"TOTAL / Prom.": 183.0}, "no desaparece en silencio"
+
+
+def test_serie_sin_ningun_periodo_canonico_cae_al_agregado_escalar():
+    """Una hoja rotulada 'Semana 1..3' no tiene claves canónicas: la serie
+    queda vacía y se cae al escalar, igual que cuando no hay columna de
+    período. No se inventa un período ni se elige una etiqueta arbitraria."""
+    df = pd.DataFrame({
+        "periodo": ["Semana 1", "Semana 2", "Semana 3"],
+        "consultas": [20, 25, 30],
+    })
+    vv = aplicar_mapeo(df, _mapeo_con_periodo([
+        {"columna_index": 1, "variable": "consultas_nuevas_mes", "agregacion": "sum", "confianza": 0.9},
+    ]))["consultas_nuevas_mes"]
+
+    assert vv.serie is None
+    assert vv.valor == 75.0
+    assert len(vv.periodos_no_reconocidos) == 3
+
+
+def test_hoja_limpia_no_reporta_periodos_no_reconocidos():
+    df = pd.DataFrame({"mes": ["Enero 2026", "Febrero 2026"], "consultas": [95, 88]})
+    vv = aplicar_mapeo(df, _mapeo_con_periodo([
+        {"columna_index": 1, "variable": "consultas_nuevas_mes", "agregacion": "sum", "confianza": 0.9},
+    ]))["consultas_nuevas_mes"]
+
+    assert vv.periodos_no_reconocidos is None
+    assert vv.valor == 88.0
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

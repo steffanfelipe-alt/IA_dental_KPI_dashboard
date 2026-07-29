@@ -37,7 +37,7 @@ from typing import Optional
 
 from schema import KPI_BY_ID
 from benchmarks import calcular_gap, Gap
-from claude_utils import extraer_texto
+from claude_utils import extraer_texto, respuesta_truncada
 from formato import fmt_por_unidad
 # Re-exportados desde contexto_cualitativo.py (Fase 4): se movieron ahí
 # para romper un import circular con diagnostico.py, que también los
@@ -235,15 +235,23 @@ def interpretar_kpi(
     if client is None:
         # Sin cliente configurado, devolvemos el payload crudo para poder
         # inspeccionar la lógica de gap + contexto sin llamar a la API.
-        return {"payload_enviado_al_asistente": payload, "interpretacion": None}
+        return {"payload_enviado_al_asistente": payload, "interpretacion": None, "truncado": False}
 
     respuesta = client.messages.create(
         model=MODEL,
         max_tokens=800,
+        # Zoom a UN KPI ya calculado, con su gap y su contexto resueltos por
+        # código: es redacción, no razonamiento. Sin esto corre thinking
+        # adaptativo (default del modelo) y se come los 800 tokens.
+        thinking={"type": "disabled"},
         system=SYSTEM_PROMPT_BASE,
         messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)}],
     )
-    return {"payload_enviado_al_asistente": payload, "interpretacion": extraer_texto(respuesta)}
+    return {
+        "payload_enviado_al_asistente": payload,
+        "interpretacion": extraer_texto(respuesta),
+        "truncado": respuesta_truncada(respuesta),
+    }
 
 
 def interpretar_panel(
@@ -302,15 +310,26 @@ def interpretar_panel(
     }
 
     if client is None:
-        return {"payload_enviado_al_asistente": payload, "interpretacion": None}
+        return {"payload_enviado_al_asistente": payload, "interpretacion": None, "truncado": False}
 
     respuesta = client.messages.create(
         model=MODEL,
         max_tokens=2000,
+        # Este es el que reventaba con "no tiene ningún bloque de texto":
+        # omitir `thinking` corre adaptativo en Sonnet 5, y el thinking se
+        # comía los 2000 tokens enteros. Los cruces entre KPIs que antes
+        # justificaban razonar acá ya los resuelve diagnostico.py de forma
+        # determinística y llegan en `payload["diagnostico"]` — este entry
+        # point redacta sobre eso, no lo redescubre.
+        thinking={"type": "disabled"},
         system=SYSTEM_PROMPT_BASE,
         messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)}],
     )
-    return {"payload_enviado_al_asistente": payload, "interpretacion": extraer_texto(respuesta)}
+    return {
+        "payload_enviado_al_asistente": payload,
+        "interpretacion": extraer_texto(respuesta),
+        "truncado": respuesta_truncada(respuesta),
+    }
 
 
 def _gap_a_dict(gap: Gap) -> dict:
@@ -474,12 +493,25 @@ def interpretar_clinica(
     )
 
     if client is None:
-        return {"payload_enviado_al_asistente": payload, "informe": None}
+        return {"payload_enviado_al_asistente": payload, "informe": None, "truncado": False}
 
-    respuesta = client.messages.create(
+    # Único entry point donde el thinking se justifica: un informe de 10
+    # secciones que jerarquiza cuellos de botella y arma un plan de acción
+    # sí es razonamiento, no redacción. Por eso acá va adaptativo — pero
+    # declarado, no heredado del default — con presupuesto suficiente para
+    # que el thinking NO se coma el informe (max_tokens es el techo de los
+    # dos juntos), y en streaming, que es lo que evita el timeout HTTP del
+    # SDK con max_tokens alto.
+    with client.messages.stream(
         model=MODEL,
-        max_tokens=4000,
+        max_tokens=16000,
+        thinking={"type": "adaptive"},
         system=SYSTEM_PROMPT_CLINICA,
         messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)}],
-    )
-    return {"payload_enviado_al_asistente": payload, "informe": extraer_texto(respuesta)}
+    ) as stream:
+        respuesta = stream.get_final_message()
+    return {
+        "payload_enviado_al_asistente": payload,
+        "informe": extraer_texto(respuesta),
+        "truncado": respuesta_truncada(respuesta),
+    }

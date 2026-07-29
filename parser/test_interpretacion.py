@@ -13,6 +13,7 @@ priorizacion.py.
 import json
 
 from calidad import evaluar_calidad
+from claude_utils import extraer_texto, respuesta_truncada
 from catalogo_tecnologico import mapear_oportunidades
 from diagnostico import diagnosticar
 from interpretacion import interpretar_clinica, interpretar_kpi, interpretar_panel, semanas_desde_serie
@@ -147,6 +148,53 @@ def test_interpretar_clinica_vacio_no_rompe():
     assert resultado["payload_enviado_al_asistente"]["diagnosticos"] == []
     assert resultado["payload_enviado_al_asistente"]["oportunidades_priorizadas"] == []
     assert resultado["payload_enviado_al_asistente"]["calidad_datos"] is None
+
+
+# ---------------------------------------------------------------------------
+# Truncamiento: el modo de falla silencioso (informe cortado que se ve
+# completo) es peor que el ruidoso. Bug real — las tres llamadas omitían
+# `thinking`, que en los modelos actuales significa adaptativo, no "sin
+# thinking": el presupuesto se iba entero en pensar y no quedaba texto.
+# ---------------------------------------------------------------------------
+
+class _Bloque:
+    def __init__(self, tipo, texto=""):
+        self.type, self.text = tipo, texto
+
+
+class _Respuesta:
+    def __init__(self, content, stop_reason):
+        self.content, self.stop_reason = content, stop_reason
+
+
+def test_respuesta_sin_texto_por_max_tokens_explica_la_causa():
+    respuesta = _Respuesta([_Bloque("thinking")], "max_tokens")
+    assert respuesta_truncada(respuesta)
+    try:
+        extraer_texto(respuesta)
+    except ValueError as e:
+        assert "thinking" in str(e), "el error debe nombrar la causa, no solo el síntoma"
+    else:
+        raise AssertionError("debía fallar: no hay bloque de texto")
+
+
+def test_texto_parcial_por_max_tokens_queda_marcado_como_truncado():
+    """El caso peligroso: SÍ hay texto, así que extraer_texto lo devuelve.
+    Sin la marca, media sección se mostraba como informe terminado."""
+    respuesta = _Respuesta([_Bloque("text", "## 1. RESUMEN EJECUTIVO\nLa clínica pre")], "max_tokens")
+    assert extraer_texto(respuesta).startswith("## 1.")
+    assert respuesta_truncada(respuesta) is True
+
+
+def test_respuesta_completa_no_se_marca_truncada():
+    respuesta = _Respuesta([_Bloque("text", "informe completo")], "end_turn")
+    assert respuesta_truncada(respuesta) is False
+
+
+def test_los_tres_entry_points_declaran_truncado_sin_cliente():
+    assert interpretar_kpi(3, 50.0, {}, client=None)["truncado"] is False
+    assert interpretar_panel({}, {}, client=None)["truncado"] is False
+    assert interpretar_clinica([], [], client=None)["truncado"] is False
 
 
 if __name__ == "__main__":

@@ -7,7 +7,17 @@ una clave canónica, y el date binning que pide el punto 2 del doc de
 deficiencias-parser-kpis.md.
 """
 
-from periodos import agrupar_por_periodo, normalizar_periodo, orden_cronologico
+from periodos import agrupar_por_periodo, es_canonico, normalizar_periodo, orden_cronologico
+
+
+def test_es_canonico_distingue_periodo_de_etiqueta_cualquiera():
+    assert es_canonico("2026-04")
+    assert es_canonico("2026-W18")
+    # Los casos que rompían la serie de excel_parser:
+    assert not es_canonico("TOTAL / Prom.")
+    assert not es_canonico("Cobro = cobrado / facturado.")
+    assert not es_canonico("Semana 1")
+    assert not es_canonico("Abril 2026"), "es una etiqueta cruda, no la clave canónica"
 
 
 def test_formatos_distintos_del_mismo_mes_normalizan_igual():

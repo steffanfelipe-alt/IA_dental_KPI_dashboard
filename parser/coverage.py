@@ -43,6 +43,13 @@ class VariableValue:
     # poder mostrar "Abril 2026" en vez de "2026-04" sin perder la clave
     # que hace funcionar la intersección.
     etiquetas_originales: Optional[dict[str, str]] = None
+    # Filas de la hoja cuya etiqueta de período NO resuelve a clave canónica
+    # ({etiqueta_cruda: valor}) — típicamente notas al pie o filas TOTAL que
+    # el modelo no listó en `filas_excluidas`. No entran a `serie` (no son un
+    # período, y elegirlas como valor vigente producía throughput = 0), pero
+    # quedan acá para poder auditarlas: mismo principio que
+    # `variables_en_cuarentena`, nada desaparece en silencio.
+    periodos_no_reconocidos: Optional[dict[str, Any]] = None
     # Fase 0 del plan de evolución (lineage): de qué celda(s) salió el
     # valor, qué agregación y conversión de unidad se aplicaron. Default
     # None a propósito — variables de wizard, sistema, o extractores que

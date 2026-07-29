@@ -107,9 +107,28 @@ def normalizar_periodo(etiqueta: str, granularidad: str = "mes") -> Optional[str
     return f"{fecha.year:04d}-{fecha.month:02d}"
 
 
+_CANONICO = re.compile(r"\d{4}-(?:\d{2}|W\d{2})")
+
+
+def es_canonico(clave: str) -> bool:
+    """¿`clave` tiene la forma que produce `normalizar_periodo` ("2026-04",
+    "2026-W18")? Predicado explícito para que quien construye una serie
+    pueda rechazar una etiqueta que NO es un período antes de meterla —
+    en vez de depender de que el orden alfabético la deje en un lugar
+    inofensivo. Bug real: la fila de nota al pie de una hoja entraba a la
+    serie como si fuera un período, y como 'P' ordena después de '2' en
+    ASCII quedaba última, o sea elegida como el valor vigente."""
+    return bool(_CANONICO.fullmatch(str(clave)))
+
+
 def orden_cronologico(periodos) -> list[str]:
     """Las claves canónicas ("2026-04", "2026-W18") ordenan cronológicamente
-    con un sort de string plano — están todas zero-padded a propósito."""
+    con un sort de string plano — están todas zero-padded a propósito.
+
+    PRECONDICIÓN: todas las claves son canónicas. Esta función no puede
+    ubicar una etiqueta que no es un período (¿va antes o después de
+    "2026-04"? no hay respuesta correcta), así que no lo intenta: filtrar
+    es responsabilidad de quien arma la serie, con `es_canonico`."""
     return sorted(periodos)
 
 

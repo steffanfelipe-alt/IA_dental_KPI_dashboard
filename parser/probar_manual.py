@@ -32,7 +32,9 @@ from dotenv import load_dotenv
 
 from pipeline import EXTRACTOR_POR_EXTENSION, procesar_migracion
 from interpretacion import interpretar_clinica, interpretar_kpi, interpretar_panel
+from cruces_propuestos import proponer_cruces
 from formato import fmt_por_unidad
+from schema import KPI_BY_ID
 
 try:
     import anthropic
@@ -53,6 +55,14 @@ client = anthropic.Anthropic(api_key=api_key)
 
 if "resultado_migracion" not in st.session_state:
     st.session_state.resultado_migracion = None
+# Fase F: cruces que el modelo propuso (capa 3) para esta migración, y qué
+# decidió el profesional sobre cada uno ({índice: "aceptado" | "rechazado"}).
+# Se resetean junto con resultado_migracion — una migración nueva invalida
+# cualquier propuesta calculada sobre el set de variables anterior.
+if "cruces_propuestos" not in st.session_state:
+    st.session_state.cruces_propuestos = []
+if "cruces_propuestos_decisiones" not in st.session_state:
+    st.session_state.cruces_propuestos_decisiones = {}
 
 st.subheader("1. Migración de datos")
 extensiones = sorted(EXTRACTOR_POR_EXTENSION.keys())
@@ -87,6 +97,16 @@ def _parsear_respuestas() -> dict:
     return respuestas
 
 
+def _md(texto: str) -> str:
+    """Escapa el `$` para que Streamlit no lo lea como delimitador de LaTeX.
+    Con dos o más `$` en un mismo st.markdown/st.caption, KaTeX se come el
+    texto del medio y lo muestra como fórmula — pasaba de verdad en la
+    serie histórica de un cruce en ARS ("2026-01: $100.000, 2026-02: ..."
+    renderizaba el "100.000, 2026-02: " en itálica matemática).
+    Sólo hace falta en contextos markdown: `st.dataframe` no los interpreta."""
+    return texto.replace("$", "\\$")
+
+
 if st.button("Procesar migración", type="primary"):
     paths_temporales = []
     for archivo in archivos_subidos or []:
@@ -105,6 +125,10 @@ if st.button("Procesar migración", type="primary"):
                 # "el dueño no contestó nada" de "contestó y no dijo nada".
                 respuestas_diagnostico=respuestas or None,
             )
+            # Fase F: una migración nueva invalida cualquier cruce propuesto
+            # sobre el set de variables anterior.
+            st.session_state.cruces_propuestos = []
+            st.session_state.cruces_propuestos_decisiones = {}
         except Exception as e:
             st.exception(e)
         finally:
@@ -135,7 +159,7 @@ if resultado:
             "sin volver a correr todo a mano."
         )
         for kpi_id, info in resultado["kpis_calculados"].items():
-            with st.expander(f"{info['kpi_nombre']} — {fmt_por_unidad(info['valor'], info['unidad'])}"):
+            with st.expander(f"{info['kpi_nombre']} — {_md(fmt_por_unidad(info['valor'], info['unidad']))}"):
                 for var, texto in (info.get("trazabilidad_legible") or {}).items():
                     st.markdown(f"- **{var}**: {texto}")
     else:
@@ -208,6 +232,41 @@ if resultado:
         if calidad.kpis_afectados:
             st.caption(f"KPIs afectados por datos en cuarentena: {calidad.kpis_afectados}")
 
+    kpis_parciales = resultado.get("kpis_parciales") or {}
+    kpis_esperando_facturas = resultado.get("kpis_esperando_facturas") or []
+    kpis_bloqueados = resultado.get("kpis_bloqueados_por_diseno") or []
+    kpis_en_conflicto = resultado.get("kpis_esperando_resolucion_conflicto") or {}
+    if kpis_parciales or kpis_esperando_facturas or kpis_bloqueados or kpis_en_conflicto:
+        st.subheader("2h. KPIs no calculados (y por qué)")
+        st.caption(
+            "El pipeline sabe exactamente por qué cada KPI no aparece en la sección 2 — "
+            "esto nunca desaparece en silencio, es el mismo principio que las variables "
+            "en cuarentena o las filas rechazadas de arriba."
+        )
+        filas_pendientes = (
+            [{
+                "KPI": f"{kid} — {KPI_BY_ID[kid].nombre}",
+                "Motivo": "Falta un dato: " + ", ".join(vars_faltantes),
+                "Categoría": "Falta info del wizard",
+            } for kid, vars_faltantes in kpis_parciales.items()]
+            + [{
+                "KPI": f"{kid} — {KPI_BY_ID[kid].nombre}",
+                "Motivo": "Requiere un export del sistema de cobros/agenda — nunca se pregunta en el wizard, nadie da estos números de memoria de forma confiable",
+                "Categoría": "Esperando facturas",
+            } for kid in kpis_esperando_facturas]
+            + [{
+                "KPI": f"{kid} — {KPI_BY_ID[kid].nombre}",
+                "Motivo": "Lo calcula el propio sistema (comparación histórica, conteo interno) — nunca se pregunta",
+                "Categoría": "Bloqueado por diseño",
+            } for kid in kpis_bloqueados]
+            + [{
+                "KPI": f"{kid} — {KPI_BY_ID[kid].nombre}",
+                "Motivo": "Dos fuentes dan valores distintos para: " + ", ".join(vars_en_conflicto),
+                "Categoría": "Esperando resolver conflicto",
+            } for kid, vars_en_conflicto in kpis_en_conflicto.items()]
+        )
+        st.dataframe(sorted(filas_pendientes, key=lambda f: f["Categoría"]), use_container_width=True)
+
     st.subheader("3. Preguntas pendientes del wizard")
     if resultado["preguntas_wizard"]:
         for p in resultado["preguntas_wizard"]:
@@ -218,7 +277,14 @@ if resultado:
     st.subheader("4. Conflictos pendientes de confirmar")
     if resultado["conflictos_pendientes"]:
         for c in resultado["conflictos_pendientes"]:
-            st.warning(f"**{c['variable']}**: {c['pregunta']}")
+            if c.get("tipo") == "cobertura_distinta":
+                # Fase E: dos fuentes con cobertura temporal distinta (una
+                # con fecha, otra sin) — st.info en vez de st.warning porque
+                # la pregunta misma ya aclara que puede no ser un error de
+                # datos, sólo dos meses distintos.
+                st.info(f"🗓️ **{c['variable']}**: {c['pregunta']}")
+            else:
+                st.warning(f"⚠️ **{c['variable']}**: {c['pregunta']}")
             st.json(c["opciones"])
     else:
         st.caption("Ninguno.")
@@ -401,3 +467,87 @@ if resultado:
                     st.json(resultado_interp["payload_enviado_al_asistente"])
     else:
         st.caption("Todavía no hay ningún KPI calculado para interpretar.")
+
+    st.divider()
+    st.subheader("9. Cruces determinísticos (fuera del catálogo de 20 KPIs)")
+    st.caption(
+        "cruces.py (Fase B): métricas que ninguna de las 20 KPIFormula fijas calcula, "
+        "generadas de dos formas, ambas sin llamar a la API — nunca mezcladas con la "
+        "sección 2 de arriba, porque un cruce no tiene benchmark ni kpi_id."
+    )
+    # Fase F: un cruce propuesto que el profesional aceptó se ve exactamente
+    # igual que uno determinístico — se fusiona acá, no se le agrega ninguna
+    # marca especial (ya pasó por la misma validación de calcular_cruce).
+    cruces_aceptados = [
+        c for i, c in enumerate(st.session_state.cruces_propuestos)
+        if st.session_state.cruces_propuestos_decisiones.get(i) == "aceptado"
+    ]
+    cruces = (resultado.get("cruces") or []) + cruces_aceptados
+    if not cruces:
+        st.caption(
+            "Ninguno todavía — necesita al menos dos variables con serie histórica que "
+            "compartan unidad compatible (\\$/conteo, \\$/horas, \\$/\\$ o conteo/conteo dentro "
+            "del embudo) y al menos 2 períodos en común."
+        )
+    else:
+        st.dataframe(
+            [{
+                "Cruce": c.nombre,
+                "Valor (último período)": fmt_por_unidad(c.valor, c.unidad),
+                "Origen": {"embudo": "Embudo declarado", "algebra": "Álgebra de unidades", "propuesto": "Propuesto por IA"}.get(c.origen, c.origen),
+                "Períodos": c.periodos_comunes,
+                "Confianza": c.confianza,
+            } for c in cruces],
+            use_container_width=True,
+        )
+        for c in cruces:
+            with st.expander(f"{c.nombre} — {_md(fmt_por_unidad(c.valor, c.unidad))}"):
+                st.markdown(f"**Fórmula**: `{c.variable_a} {c.operacion} {c.variable_b}`")
+                st.markdown(f"**Por qué es válido**: {c.justificacion}")
+                st.markdown(
+                    "**Serie histórica**: " + ", ".join(f"{p}: {_md(fmt_por_unidad(v, c.unidad))}" for p, v in c.serie.items())
+                )
+
+    st.markdown("**9b. Cruces propuestos por IA (a confirmar)**")
+    st.caption(
+        "cruces_propuestos.py (Fase C): el modelo sugiere qué cruzar y por qué le "
+        "importaría al dueño — nunca calcula el número, eso lo hace calcular_cruce igual "
+        "que en la sección 9. Llamada aparte a la API, no se dispara sola."
+    )
+    if st.button("🤖 Proponer cruces con IA"):
+        with st.spinner("Llamando a proponer_cruces contra la API real..."):
+            try:
+                st.session_state.cruces_propuestos = proponer_cruces(resultado["variables"], client=client)
+                st.session_state.cruces_propuestos_decisiones = {}
+            except Exception as e:
+                st.exception(e)
+
+    cruces_propuestos = st.session_state.cruces_propuestos
+    if not cruces_propuestos:
+        st.caption("Ninguno todavía — apretá el botón de arriba, o el modelo no propuso nada esta vez.")
+    else:
+        decisiones = st.session_state.cruces_propuestos_decisiones
+        for i, c in enumerate(cruces_propuestos):
+            decision = decisiones.get(i)
+            with st.container(border=True):
+                st.markdown(f"**{c.nombre}** — {_md(fmt_por_unidad(c.valor, c.unidad))}")
+                st.markdown(f"**Etapa del embudo:** {c.etapa_embudo}")
+                st.markdown(f"**Cómo ayuda a decidir:** {c.impacto_decision}")
+                if decision == "aceptado":
+                    st.success("✅ Aceptado — ya está en la tabla de la sección 9.")
+                    if st.button("Revertir", key=f"revertir_{i}"):
+                        del decisiones[i]
+                        st.rerun()
+                elif decision == "rechazado":
+                    st.error("❌ Descartado.")
+                    if st.button("Revertir", key=f"revertir_{i}"):
+                        del decisiones[i]
+                        st.rerun()
+                else:
+                    col_aceptar, col_descartar = st.columns(2)
+                    if col_aceptar.button("✅ Aceptar", key=f"aceptar_{i}"):
+                        decisiones[i] = "aceptado"
+                        st.rerun()
+                    if col_descartar.button("❌ Descartar", key=f"descartar_{i}"):
+                        decisiones[i] = "rechazado"
+                        st.rerun()

@@ -38,7 +38,13 @@ def fmt_horas(valor: Optional[float], decimales: int = 1) -> str:
     return f"{fmt_numero(valor, decimales)} hs"
 
 
-UNIDADES_ARS = {"$", "$/hora", "$/paciente"}
+UNIDADES_ARS = {
+    "$", "$/hora", "$/paciente",
+    # Fase B (cruces.py): mismas unidades semánticas, nombre distinto —
+    # OPERACIONES_LEGALES en schema.py usa "monto_ars" (el vocabulario de
+    # unidad_dato de MetricaInfo), no "$" (el vocabulario de KPIFormula.unidad).
+    "monto_ars", "monto_ars/unidad", "monto_ars/hora",
+}
 UNIDADES_HORAS = {"hs/semana", "hs/mes"}
 
 

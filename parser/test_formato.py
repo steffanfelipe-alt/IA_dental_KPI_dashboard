@@ -37,6 +37,15 @@ def test_fmt_por_unidad_conteo():
     assert fmt_por_unidad(102, "conteo") == "102"
 
 
+def test_fmt_por_unidad_reconoce_las_unidades_de_cruces_py():
+    """Fase B: OPERACIONES_LEGALES (schema.py) usa "monto_ars" (vocabulario
+    de MetricaInfo.unidad_dato), no "$" (vocabulario de KPIFormula.unidad)
+    — deben formatearse igual que un monto en $."""
+    assert fmt_por_unidad(104745.76, "monto_ars/unidad") == "$104.746"
+    assert fmt_por_unidad(81315.79, "monto_ars/hora") == "$81.316"
+    assert fmt_por_unidad(2660000, "monto_ars") == "$2.660.000"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

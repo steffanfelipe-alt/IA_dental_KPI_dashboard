@@ -17,9 +17,28 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from agregados import calcular_agregado
+from reconciliacion import FUENTE_DERIVADA
 from schema import KPI_FORMULAS, INTERNAL_VARIABLES, SOLO_MIGRACION_O_SISTEMA, VARIABLE_TYPES
 from preguntas_wizard import obtener_pregunta
 from trazabilidad import Trazabilidad, explicar
+
+
+def _inferir_metodo(fuente: str) -> str:
+    """Fase D1: de dónde salió el NÚMERO en sí — no el archivo, el
+    número — más allá de por qué `fuente` llegó. "medido" (una celda
+    real de una migración), "estimado" (el dueño contestó de memoria en
+    el wizard — las preguntas de preguntas_wizard.py dicen
+    "aproximadamente" a propósito) o "derivado" (despejado
+    algebraicamente de una tasa declarada, ver derivacion.py).
+
+    Se infiere de `fuente`, que ya existe en cada VariableValue — ningún
+    extractor, ni el wizard, ni derivacion.py necesitan cambiar para
+    poblar esto (ver `VariableValue.__post_init__`)."""
+    if fuente == FUENTE_DERIVADA:
+        return "derivado"
+    if fuente == "wizard":
+        return "estimado"
+    return "medido"
 
 
 @dataclass
@@ -55,12 +74,32 @@ class VariableValue:
     # None a propósito — variables de wizard, sistema, o extractores que
     # todavía no la pueblan (vision_parser) siguen funcionando igual.
     trazabilidad: Optional[Trazabilidad] = None
+    # Fase D1: "medido" | "estimado" | "derivado" — ver _inferir_metodo.
+    # None (default) se resuelve solo en __post_init__ a partir de
+    # `fuente`, así ningún call-site existente (excel_parser.py,
+    # derivacion.py, el wizard, etc.) necesita cambiar para poblarlo. Se
+    # puede pasar explícito si algún día hace falta un caso que la
+    # inferencia automática no cubra bien.
+    metodo: Optional[str] = None  # "medido" | "estimado" | "derivado"
+
+    def __post_init__(self):
+        if self.metodo is None:
+            self.metodo = _inferir_metodo(self.fuente)
 
 
 @dataclass
 class Conflicto:
     variable: str
     candidatos: list[dict] = field(default_factory=list)  # [{"valor", "archivo", "fuente", "confianza"}]
+    # Fase E: distingue un desacuerdo real (dos fuentes que SÍ hablan del
+    # mismo período y dan números distintos) de una comparación entre
+    # fuentes con cobertura temporal distinta (una trae serie con fecha,
+    # la otra sólo un escalar sin fecha — pueden estar hablando de meses
+    # diferentes, no necesariamente en conflicto). Sigue bloqueando en
+    # ambos casos — lo único que cambia es la pregunta que se le hace al
+    # dueño de la clínica (ver pipeline.py). Default preserva el
+    # comportamiento de siempre para todo conflicto ya existente.
+    tipo: str = "valores_distintos"  # | "cobertura_distinta"
 
 
 @dataclass

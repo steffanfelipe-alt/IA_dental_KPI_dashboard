@@ -355,6 +355,67 @@ def test_hoja_limpia_no_reporta_periodos_no_reconocidos():
     assert vv.valor == 88.0
 
 
+# ---------------------------------------------------------------------------
+# Fase 0.1: binning mensual. Bug real (presupuestos_marzo2026.csv): una hoja
+# transaccional con una fecha real por fila agrupaba por la etiqueta CRUDA
+# (cada día es su propio grupo) y recién después normalizaba a mes — al
+# colisionar en la misma clave, la última fila pisaba a las anteriores. La
+# suma de los aceptados de marzo daba 787.000 (el monto del 2026-03-25) en
+# vez de 8.989.000 (la suma real de las 29 filas del mes).
+# ---------------------------------------------------------------------------
+
+def _mapeo_transaccional(mapeo: list[dict]) -> dict:
+    return {"hoja": None, "fila_encabezado": 0, "orientacion": "transaccional",
+            "columna_periodo": 0, "mapeo": mapeo}
+
+
+def test_varias_fechas_del_mismo_mes_suman_el_mes_no_el_ultimo_dia():
+    df = pd.DataFrame({
+        "fecha": ["2026-03-01", "2026-03-05", "2026-03-28", "2026-04-02"],
+        "monto": [100000, 200000, 300000, 50000],
+    })
+    vv = aplicar_mapeo(df, _mapeo_transaccional([
+        {"columna_index": 1, "variable": "monto_presupuestos_aceptados", "agregacion": "sum", "confianza": 0.9},
+    ]))["monto_presupuestos_aceptados"]
+
+    assert vv.serie == {"2026-03": 600000.0, "2026-04": 50000.0}, (
+        "marzo debe sumar las tres filas (600.000), no quedarse con la del "
+        "último día (300.000) — ese era exactamente el bug"
+    )
+    assert vv.valor == 50000.0, "vigente = último período real, sin tocar (Fase A)"
+    assert vv.etiquetas_originales["2026-03"] == "2026-03-01", (
+        "con varias fechas en el mismo mes, la etiqueta representativa es la más temprana"
+    )
+
+
+def test_varias_fechas_del_mismo_mes_con_avg_promedia_el_mes():
+    df = pd.DataFrame({
+        "fecha": ["2026-03-01", "2026-03-10", "2026-03-20"],
+        "duracion_min": [100, 200, 300],
+    })
+    vv = aplicar_mapeo(df, _mapeo_transaccional([
+        {"columna_index": 1, "variable": "tiempo_respuesta_promedio_min", "agregacion": "avg", "confianza": 0.9},
+    ]))["tiempo_respuesta_promedio_min"]
+
+    assert vv.serie == {"2026-03": 200.0}, "avg debe promediar el mes (200), no quedarse con el último (300)"
+
+
+def test_periodos_en_filas_sin_regresion_una_etiqueta_por_mes():
+    """No-regresión: la hoja típica (un mes, una fila) debe seguir dando
+    exactamente lo mismo que antes de normalizar-antes-de-agrupar."""
+    df = pd.DataFrame({
+        "mes": ["Enero 2026", "Febrero 2026", "Marzo 2026"],
+        "cobrado": [4460000, 4200000, 5940000],
+    })
+    vv = aplicar_mapeo(df, _mapeo_con_periodo([
+        {"columna_index": 1, "variable": "monto_cobrado", "agregacion": "sum", "confianza": 0.9},
+    ]))["monto_cobrado"]
+
+    assert vv.serie == {"2026-01": 4460000.0, "2026-02": 4200000.0, "2026-03": 5940000.0}
+    assert vv.valor == 5940000.0
+    assert vv.etiquetas_originales == {"2026-01": "Enero 2026", "2026-02": "Febrero 2026", "2026-03": "Marzo 2026"}
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

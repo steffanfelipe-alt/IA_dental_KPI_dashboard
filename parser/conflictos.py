@@ -108,6 +108,35 @@ def _resolver_por_periodo(candidatos: list[VariableValue], var: str) -> tuple[Op
     return resuelto, None
 
 
+def _resolver_por_valor_escalar(candidatos: list[VariableValue], var: str) -> tuple[Optional[VariableValue], Optional[Conflicto]]:
+    """Comparar `.valor` a secas — el camino de siempre, para cuando NINGÚN
+    candidato trae período (dato de una sola foto, wizard, o un extractor
+    que no pudo identificar período). Extraído sin cambios de comportamiento
+    para poder reusarlo también como fallback del caso mixto (Fase E, ver
+    `resolver_conflictos`) sin duplicar la lógica de empate."""
+    mejor_por_valor: dict[Any, VariableValue] = {}
+    for c in candidatos:
+        clave = _clave_comparable(c.valor)
+        mejor_actual = mejor_por_valor.get(clave)
+        if mejor_actual is None or c.confianza > mejor_actual.confianza:
+            mejor_por_valor[clave] = c
+
+    if len(mejor_por_valor) == 1:
+        return next(iter(mejor_por_valor.values())), None
+
+    ordenados = sorted(mejor_por_valor.values(), key=lambda c: c.confianza, reverse=True)
+    mayor, segunda = ordenados[0], ordenados[1]
+    # round() evita que restas como 0.9 - 0.8 == 0.09999999999999998
+    # (error de punto flotante) hagan pasar por "empate" un caso que
+    # justo toca el umbral.
+    if round(mayor.confianza - segunda.confianza, 9) >= UMBRAL_EMPATE:
+        return mayor, None
+    return None, Conflicto(
+        variable=var,
+        candidatos=[_candidato(c) for c in sorted(candidatos, key=lambda c: c.confianza, reverse=True)],
+    )
+
+
 def resolver_conflictos(
     fuentes: list[dict[str, VariableValue]],
 ) -> tuple[dict[str, VariableValue], list[Conflicto]]:
@@ -136,7 +165,11 @@ def resolver_conflictos(
             resueltas[var] = confirmado
             continue
 
-        if all(c.serie for c in candidatos):
+        con_serie = [c for c in candidatos if c.serie]
+        sin_serie = [c for c in candidatos if not c.serie]
+
+        if not sin_serie:
+            # Todas traen serie: resolver período a período, sin cambios.
             resuelto, conflicto = _resolver_por_periodo(candidatos, var)
             if conflicto is not None:
                 conflictos.append(conflicto)
@@ -144,31 +177,54 @@ def resolver_conflictos(
                 resueltas[var] = resuelto
             continue
 
-        # Al menos un candidato no trae serie (dato de una sola foto,
-        # wizard, o un extractor que no pudo identificar período): se
-        # compara el escalar `.valor` como antes.
-        mejor_por_valor: dict[Any, VariableValue] = {}
-        for c in candidatos:
-            clave = _clave_comparable(c.valor)
-            mejor_actual = mejor_por_valor.get(clave)
-            if mejor_actual is None or c.confianza > mejor_actual.confianza:
-                mejor_por_valor[clave] = c
+        if con_serie:
+            # Fase E — caso mixto: al menos una fuente trae fecha y al
+            # menos una no. Comparar el `.valor` de la que no tiene fecha
+            # contra el VIGENTE de la que sí — sin saber si están hablando
+            # del mismo mes — es el bug real que encontró Felipe: el
+            # vigente de junio (Excel, con serie) terminaba comparado
+            # contra el total de marzo (CSV, sin serie) como si fueran la
+            # misma pregunta. Acá primero se resuelven las fuentes CON
+            # fecha entre sí (su comparación SÍ es válida, período a
+            # período), y sólo después se compara ese resultado contra las
+            # que no tienen fecha — nunca al revés.
+            resuelto_serie, conflicto_interno = _resolver_por_periodo(con_serie, var)
+            if conflicto_interno is not None:
+                # Las fuentes CON fecha ya disienten entre sí para algún
+                # período — ese es el conflicto real (mismo tipo de
+                # siempre, "valores_distintos"); las fuentes sin fecha se
+                # anexan sólo como contexto, no cambian la naturaleza del
+                # conflicto.
+                conflicto_interno.candidatos += [_candidato(c) for c in sin_serie]
+                conflictos.append(conflicto_interno)
+                continue
 
-        if len(mejor_por_valor) == 1:
-            resueltas[var] = next(iter(mejor_por_valor.values()))
-            continue
+            if resuelto_serie is not None:
+                discrepantes = [
+                    c for c in sin_serie
+                    if _clave_comparable(c.valor) != _clave_comparable(resuelto_serie.valor)
+                ]
+                if not discrepantes:
+                    # Coinciden con el vigente: no hay nada que preguntar.
+                    resueltas[var] = resuelto_serie
+                else:
+                    conflictos.append(Conflicto(
+                        variable=var,
+                        tipo="cobertura_distinta",
+                        candidatos=[_candidato(resuelto_serie)] + [_candidato(c) for c in discrepantes],
+                    ))
+                continue
+            # con_serie no resolvió nada (series vacías tras el merge):
+            # cae al camino escalar de siempre, comparando TODOS los
+            # candidatos — mismo fallback que si nadie tuviera serie.
 
-        ordenados = sorted(mejor_por_valor.values(), key=lambda c: c.confianza, reverse=True)
-        mayor, segunda = ordenados[0], ordenados[1]
-        # round() evita que restas como 0.9 - 0.8 == 0.09999999999999998
-        # (error de punto flotante) hagan pasar por "empate" un caso que
-        # justo toca el umbral.
-        if round(mayor.confianza - segunda.confianza, 9) >= UMBRAL_EMPATE:
-            resueltas[var] = mayor
-        else:
-            conflictos.append(Conflicto(
-                variable=var,
-                candidatos=[_candidato(c) for c in sorted(candidatos, key=lambda c: c.confianza, reverse=True)],
-            ))
+        # Al menos un candidato no trae serie y (arriba) `con_serie` no
+        # aportó nada resoluble, o directamente ningún candidato trae
+        # serie: se compara el escalar `.valor` como siempre.
+        resuelto, conflicto = _resolver_por_valor_escalar(candidatos, var)
+        if conflicto is not None:
+            conflictos.append(conflicto)
+        elif resuelto is not None:
+            resueltas[var] = resuelto
 
     return resueltas, conflictos

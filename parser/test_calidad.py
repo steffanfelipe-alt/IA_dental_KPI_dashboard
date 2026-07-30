@@ -96,6 +96,69 @@ def test_suficiencia_datos_kpi_inexistente_no_rompe():
     assert suficiencia_datos(999, {}) is None
 
 
+# ---------------------------------------------------------------------------
+# Fase D1: metodo = "medido" | "estimado" | "derivado", inferido automático
+# en VariableValue.__post_init__ a partir de `fuente` — acá se prueba el
+# efecto en suficiencia_datos, que es donde el plan dijo que debía pasar.
+# ---------------------------------------------------------------------------
+
+def test_suficiencia_datos_menor_con_variable_estimada_del_wizard():
+    """Antes de Fase D1, "wizard" pesaba igual que "migracion_excel" acá
+    (el único filtro era fuente != FUENTE_DERIVADA) — un dueño contestando
+    de memoria contaba como si fuera tan sólido como una celda de Excel.
+    Ya no: metodo="estimado" pesa 0.6, no 1.0."""
+    variables_todas_medidas = {
+        "turnos_agendados": VariableValue(73, "migracion_excel", 0.9),
+        "no_shows": VariableValue(16, "migracion_excel", 0.9),
+    }
+    variables_con_estimada = {
+        "turnos_agendados": VariableValue(73, "migracion_excel", 0.9),
+        "no_shows": VariableValue(16, "wizard", 0.7),
+    }
+    suf_medidas = suficiencia_datos(4, variables_todas_medidas)  # KPI 4: tasa de no-show
+    suf_estimada = suficiencia_datos(4, variables_con_estimada)
+    assert suf_medidas == 1.0
+    assert suf_estimada == 0.8, "(1.0 + 0.6) / 2 == 0.8"
+    assert suf_estimada < suf_medidas
+
+
+def test_suficiencia_datos_estimada_pesa_mas_que_derivada():
+    """"estimado" (wizard, 0.6) sigue siendo más confiable que "derivado"
+    (despejado algebraicamente, 0.0) — un dato que el dueño puso a mano,
+    aunque sea de memoria, no es lo mismo que un número que nunca se leyó
+    en ningún lado."""
+    from reconciliacion import FUENTE_DERIVADA
+    con_estimada = suficiencia_datos(4, {
+        "turnos_agendados": VariableValue(73, "migracion_excel", 0.9),
+        "no_shows": VariableValue(16, "wizard", 0.7),
+    })
+    con_derivada = suficiencia_datos(4, {
+        "turnos_agendados": VariableValue(73, "migracion_excel", 0.9),
+        "no_shows": VariableValue(16, FUENTE_DERIVADA, 0.6),
+    })
+    assert con_estimada > con_derivada
+
+
+def test_metodo_se_infiere_solo_sin_tocar_ningun_call_site():
+    """El campo existe y se infiere automático — ningún constructor de
+    VariableValue en todo el código necesitó cambiar para esto."""
+    from reconciliacion import FUENTE_DERIVADA
+    assert VariableValue(1, "migracion_excel", 0.9).metodo == "medido"
+    assert VariableValue(1, "migracion_excel:Resumen mensual", 0.9).metodo == "medido"
+    assert VariableValue(1, "migracion_foto", 0.9).metodo == "medido"
+    assert VariableValue(1, "sistema", 1.0).metodo == "medido"
+    assert VariableValue(1, "confirmado_por_dueno", 1.0).metodo == "medido"
+    assert VariableValue(1, "wizard", 0.7).metodo == "estimado"
+    assert VariableValue(1, FUENTE_DERIVADA, 0.6).metodo == "derivado"
+
+
+def test_metodo_explicito_no_se_pisa_con_la_inferencia():
+    """Se puede forzar un metodo explícito si algún caso puntual lo
+    necesita — la inferencia sólo corre cuando queda en None."""
+    vv = VariableValue(1, "migracion_excel", 0.9, metodo="estimado")
+    assert vv.metodo == "estimado"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

@@ -140,6 +140,35 @@ def test_con_respuestas_diagnostico_cablea_diagnostico_y_oportunidades():
         _restaurar_extractores(original)
 
 
+def test_cruces_se_calculan_independientemente_de_respuestas_diagnostico():
+    """Fase B: a diferencia de diagnóstico/oportunidades (Fases 4-6),
+    resultado["cruces"] no depende de respuestas_diagnostico — corre
+    siempre, porque es puramente determinista sobre las variables."""
+    original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
+
+    def extractor_con_cruce(path, client, registro_clientes=None):
+        serie_monto = {"2026-01": 4000000.0, "2026-02": 5000000.0}
+        serie_pacientes = {"2026-01": 50.0, "2026-02": 60.0}
+        return {
+            "monto_cobrado": VariableValue(5000000, "migracion_excel", 0.9, serie=serie_monto),
+            "pacientes_atendidos_periodo": VariableValue(60, "migracion_excel", 0.9, serie=serie_pacientes),
+        }, {}
+
+    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": extractor_con_cruce}
+    try:
+        sin_respuestas = pipeline.procesar_migracion(["clinica.xlsx"], client=None)
+        assert sin_respuestas["diagnostico"] is None  # esto sí depende de respuestas_diagnostico
+        assert any(
+            c.variable_a == "monto_cobrado" and c.variable_b == "pacientes_atendidos_periodo"
+            for c in sin_respuestas["cruces"]
+        ), "el cruce debe existir aunque no se hayan cargado respuestas de la Guía"
+
+        con_respuestas = pipeline.procesar_migracion(["clinica.xlsx"], client=None, respuestas_diagnostico={})
+        assert len(con_respuestas["cruces"]) == len(sin_respuestas["cruces"])
+    finally:
+        _restaurar_extractores(original)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

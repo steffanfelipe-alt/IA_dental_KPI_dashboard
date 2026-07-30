@@ -57,10 +57,24 @@ VARIABLE_TYPES = {
     # --- Embudo ---
     "consultas_nuevas_mes": "int",
     "turnos_agendados": "int",
+    # Fase B (cruces determinísticos, ETAPAS_EMBUDO más abajo): la etapa
+    # entre "se agendó" y "se le presentó un presupuesto". Variable propia
+    # a propósito — NO es sinónimo de pacientes_atendidos_periodo (ese
+    # cuenta TODO paciente atendido, incluidos los que ya vuelven a
+    # control) ni se deriva silenciosamente de turnos_agendados - no_shows
+    # (una hoja real suele traer la columna "Asisten" ya contada, y
+    # reconciliar contra eso es justo lo que permite detectar un no_shows
+    # mal mapeado — ver reconciliacion.py).
+    "turnos_asistidos": "int",
     "no_shows": "int",
     "presupuestos_emitidos": "int",
     "presupuestos_aceptados": "int",
     "monto_presupuestos_aceptados": "float",       # $ acumulado
+    # Fase D2: sólo vocabulario, no entra a ninguna KPIFormula. Sin esto, el
+    # "Presupuestado total" de una migración y el total real de otra fuente
+    # no tenían dónde chocar — reconciliacion.py nunca los veía como la
+    # misma variable.
+    "monto_presupuestos_emitidos": "float",        # $ acumulado
     "tratamientos_iniciados": "int",
     "tratamientos_completados": "int",
     "pacientes_dados_alta": "int",
@@ -169,6 +183,19 @@ METRICAS: dict[str, MetricaInfo] = {
         sinonimos=["turnos agendados", "citas agendadas", "1er turno"],
         no_confundir_con="una columna llamada 'Tasa agenda' o similar (eso es un % ya calculado, NO este conteo)",
     ),
+    "turnos_asistidos": MetricaInfo(
+        "Turnos asistidos",
+        "Cantidad de turnos agendados a los que el paciente SÍ asistió en el período. "
+        "Un CONTEO. Si la hoja trae 'Agendan 1er turno' y 'Asisten' como columnas "
+        "separadas, esta variable es la columna 'Asisten'.",
+        "conteo",
+        sinonimos=["asisten", "turnos asistidos", "asistieron", "concurrieron"],
+        no_confundir_con=(
+            "pacientes_atendidos_periodo (ese es TODO paciente atendido en el período, "
+            "incluidos los que ya venían en tratamiento — no solo los del embudo de "
+            "turnos nuevos) ni turnos_agendados (ese incluye los que después faltaron)"
+        ),
+    ),
     "no_shows": MetricaInfo(
         "No-shows (ausencias sin aviso)",
         "Cantidad de turnos agendados a los que el paciente NO asistió. Un "
@@ -205,6 +232,14 @@ METRICAS: dict[str, MetricaInfo] = {
         "monto_ars",
         sinonimos=["monto presupuestado aceptado", "total presupuestos aceptados"],
         no_confundir_con="monto_cobrado (lo efectivamente cobrado) ni monto_facturado",
+    ),
+    "monto_presupuestos_emitidos": MetricaInfo(
+        "Monto total de presupuestos emitidos",
+        "Suma en ARS de todos los presupuestos/planes de tratamiento presentados "
+        "en el período, hayan sido aceptados o no (el 'Presupuestado total').",
+        "monto_ars",
+        sinonimos=["presupuestado total", "total presupuestado", "monto presupuestado"],
+        no_confundir_con="monto_presupuestos_aceptados (subconjunto de esto, sólo lo que se aceptó)",
     ),
     "tratamientos_iniciados": MetricaInfo(
         "Tratamientos iniciados",
@@ -406,6 +441,63 @@ METRICAS: dict[str, MetricaInfo] = {
 
 METRICAS_EXTRAIBLES: dict[str, MetricaInfo] = {
     v: info for v, info in METRICAS.items() if v not in INTERNAL_VARIABLES
+}
+
+
+# ---------------------------------------------------------------------------
+# 1c. Cruces determinísticos (Fase B) — declaraciones puras, sin lógica.
+#
+# El catálogo de 20 KPIFormula de abajo es cerrado por diseño (ver docstring
+# del módulo): cada fórmula corresponde 1:1 a la tabla del Miro. Pero eso
+# significa que ningún cruce entre variables de hojas distintas existe
+# aunque ambas estén cargadas con serie histórica alineada — ej.
+# monto_cobrado ÷ pacientes_atendidos_periodo (ingreso por paciente
+# atendido) no es ninguno de los 20 KPIs y hoy es invisible.
+#
+# `cruces.py` (módulo aparte, NO este archivo) usa estas dos declaraciones
+# para generar esos cruces sin que el modelo invente ninguna fórmula:
+#   - ETAPAS_EMBUDO: toda razón etapa_j / etapa_i con j > i es una tasa de
+#     conversión válida por construcción — el orden ya está declarado acá,
+#     una sola vez.
+#   - OPERACIONES_LEGALES: análisis dimensional puro sobre `unidad_dato` de
+#     MetricaInfo, ya declarada arriba para las ~30 variables. Filtra por
+#     construcción cualquier combinación sin interpretación (ej.
+#     resenas_nuevas ÷ no_shows es dimensionalmente "válido" — conteo/conteo
+#     — pero semánticamente basura si ninguna de las dos está en el embudo).
+#
+# schema.py sólo declara; `cruces.py` es quien calcula y filtra. No hay
+# import de cruces.py acá (evita el acoplamiento inverso).
+# ---------------------------------------------------------------------------
+
+ETAPAS_EMBUDO: list[str] = [
+    "consultas_nuevas_mes",
+    "turnos_agendados",
+    "turnos_asistidos",
+    "presupuestos_emitidos",
+    "presupuestos_aceptados",
+    "tratamientos_iniciados",
+    "tratamientos_completados",
+    "pacientes_dados_alta",
+]
+
+# (unidad_a, operación, unidad_b) -> unidad del resultado. Todo lo que no
+# esté acá se rechaza por análisis dimensional — es la guarda determinista
+# equivalente a la de `_formato_incompatible` en excel_parser.py, aplicada
+# a cruces en vez de a mapeo de columnas.
+#
+# La entrada ("conteo", "/", "conteo") es la única que necesita una
+# condición extra fuera de esta tabla: sólo es válida si AMBAS variables
+# están en ETAPAS_EMBUDO y respetan su orden (j > i) — sin esa condición,
+# cualquier par de conteos no relacionados (reseñas ÷ no-shows) pasaría el
+# filtro dimensional sin decir nada real. `cruces.py` aplica esa condición
+# antes de aceptar el par; acá sólo se declara que la FORMA es legal.
+OPERACIONES_LEGALES: dict[tuple[str, str, str], str] = {
+    ("monto_ars", "/", "conteo"): "monto_ars/unidad",
+    ("monto_ars", "/", "horas"): "monto_ars/hora",
+    ("monto_ars", "/", "monto_ars"): "%",
+    ("conteo", "/", "horas"): "conteo/hora",
+    ("monto_ars", "-", "monto_ars"): "monto_ars",
+    ("conteo", "/", "conteo"): "%",  # sólo dentro de ETAPAS_EMBUDO — ver cruces.py
 }
 
 

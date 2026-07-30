@@ -139,7 +139,16 @@ def agrupar_por_periodo(
     traen un campo de fecha en el mismo período canónico, antes de que
     cualquier otra función los agregue. Un registro cuya fecha no se pudo
     interpretar cae en la clave `None` — visible para auditar, nunca
-    descartado en silencio."""
+    descartado en silencio.
+
+    Sin uso todavía (2026-07): su consumidor previsto es el camino de
+    `ledger.py` (Fase 2, `construir_ledger_pacientes`), que agrupa eventos
+    de paciente ya extraídos como `list[dict]` — no un DataFrame de pandas.
+    NO es el arreglo del bug de binning mensual de
+    `extractors.excel_parser._construir_serie_periodo`: ese opera sobre un
+    DataFrame y se corrigió ahí directamente (normalizar antes de agrupar
+    con `groupby`), no reusando esta función. No borrar: cablear el ledger
+    es trabajo pendiente, no descartado."""
     grupos: dict[Optional[str], list[dict]] = {}
     for registro in registros:
         etiqueta = registro.get(campo_fecha)

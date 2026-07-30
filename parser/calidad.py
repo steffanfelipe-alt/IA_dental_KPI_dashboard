@@ -19,7 +19,6 @@ lo mismo que un dato leído directo.
 from dataclasses import dataclass
 from typing import Optional
 
-from reconciliacion import FUENTE_DERIVADA
 from schema import KPI_BY_ID, KPI_FORMULAS
 
 
@@ -82,10 +81,29 @@ def evaluar_calidad(resultado_pipeline: dict) -> ReporteCalidad:
     )
 
 
+# Fase D1: cuánto pesa cada `VariableValue.metodo` en la suficiencia de un
+# KPI. "medido" pesa igual que antes (1.0 — sin cambio de comportamiento
+# para el caso ya cubierto). "derivado" sigue en 0 — exactamente el mismo
+# número que daba `fuente != FUENTE_DERIVADA` antes de que existiera
+# `metodo`, no es un valor nuevo, es el mismo con otro nombre. "estimado"
+# es la pieza nueva: antes del wizard contaba como si fuera tan sólido
+# como una celda de Excel (fuente != FUENTE_DERIVADA era su único filtro,
+# y "wizard" pasaba ese filtro igual que "migracion_excel"); un dueño
+# contestando de memoria no es lo mismo que un número leído de un
+# archivo, así que ahora pesa menos — pero no cero, porque tampoco es una
+# construcción algebraica sin ningún dato propio detrás. Mismo valor que
+# `derivacion.CONFIANZA_DERIVADA` (0.6, deliberado): es el mismo umbral
+# que usa el resto del sistema para "menos que un dato duro, más que
+# nada".
+PESO_METODO = {"medido": 1.0, "estimado": 0.6, "derivado": 0.0}
+
+
 def suficiencia_datos(kpi_id: int, variables: dict) -> Optional[float]:
-    """Qué fracción de las variables de este KPI vienen de una fuente
-    OBSERVADA (no derivada de una tasa — ver derivacion.py). 1.0 si todas
-    son observadas; None si el KPI no está calculable con lo que hay
+    """Cuánto pesan, en promedio, las variables de este KPI según qué tan
+    directo es cada número (`VariableValue.metodo` — Fase D1): 1.0 si
+    todas son "medido"; menos si alguna es "estimado" (wizard, el dueño
+    contesta de memoria) o "derivado" (despejada de una tasa, ver
+    derivacion.py). None si el KPI no está calculable con lo que hay
     (faltan variables) — no tiene sentido hablar de "suficiencia" de algo
     que ni siquiera se pudo calcular."""
     kpi = KPI_BY_ID.get(kpi_id)
@@ -94,5 +112,5 @@ def suficiencia_datos(kpi_id: int, variables: dict) -> Optional[float]:
     requeridas = kpi.variables
     if any(v not in variables for v in requeridas):
         return None
-    observadas = sum(1 for v in requeridas if variables[v].fuente != FUENTE_DERIVADA)
-    return round(observadas / len(requeridas), 3)
+    peso_total = sum(PESO_METODO.get(variables[v].metodo, 1.0) for v in requeridas)
+    return round(peso_total / len(requeridas), 3)

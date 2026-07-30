@@ -26,6 +26,7 @@ from typing import Any, Optional
 from schema import KPI_BY_ID
 from calidad import evaluar_calidad
 from catalogo_tecnologico import mapear_oportunidades
+from cruces import generar_cruces
 from coverage import VariableValue, evaluar_cobertura, variables_para_wizard
 from conflictos import resolver_conflictos
 from diagnostico import diagnosticar
@@ -184,7 +185,7 @@ def procesar_migracion(
         "kpis_esperando_facturas": [ids],
         "kpis_esperando_resolucion_conflicto": {id: [variables_en_conflicto]},
         "preguntas_wizard": [ {variable, tipo, kpis_que_desbloquea, prioridad} ],
-        "conflictos_pendientes": [ {variable, pregunta, opciones, permite_valor_manual} ],
+        "conflictos_pendientes": [ {variable, tipo, pregunta, opciones, permite_valor_manual} ],
         "variables_a_confirmar": [ ... ],       # baja confianza, mostrar como sugerencia
         "variables": {...},                     # snapshot completo para guardar en la DB
         "calidad_datos": ReporteCalidad(...),   # Fase 3: completitud/consistencia/confianza agregados
@@ -292,7 +293,19 @@ def procesar_migracion(
         "conflictos_pendientes": [
             {
                 "variable": c.variable,
-                "pregunta": f"Encontramos valores distintos para {c.variable}. ¿Cuál es correcto?",
+                "tipo": c.tipo,
+                # Fase E: un conflicto tipo="cobertura_distinta" (una fuente
+                # trae fecha, la otra no — ver conflictos.resolver_conflictos)
+                # no es necesariamente un error de datos: puede que las dos
+                # fuentes hablen de meses distintos. La pregunta lo dice así
+                # en vez de sugerir que uno de los dos números está mal.
+                "pregunta": (
+                    f"Encontramos {c.variable} en dos archivos con valores distintos, pero "
+                    f"uno trae fecha y el otro no — puede que hablen de meses distintos, no "
+                    f"necesariamente un error. ¿Cuál usamos?"
+                ) if c.tipo == "cobertura_distinta" else (
+                    f"Encontramos valores distintos para {c.variable}. ¿Cuál es correcto?"
+                ),
                 "opciones": c.candidatos,
                 "permite_valor_manual": True,
             }
@@ -323,6 +336,13 @@ def procesar_migracion(
     # Fase 3 (Data Quality Report): pura agregación de lo que ya está en
     # `resultado` — no dispara ninguna extracción ni llamada a Claude.
     resultado["calidad_datos"] = evaluar_calidad(resultado)
+
+    # Fase B: cruces determinísticos fuera de las 20 KPIFormula (ver
+    # cruces.py). Corre siempre, con o sin respuestas_diagnostico —
+    # a diferencia de las Fases 4-6, no depende de contexto cualitativo.
+    # Clave aparte a propósito: un Cruce no tiene kpi_id y no entra a
+    # evaluar_cobertura, diagnosticar ni priorizar_oportunidades.
+    resultado["cruces"] = generar_cruces(variables)
 
     # Fases 4-6: diagnóstico estructurado + oportunidades del catálogo ya
     # priorizadas. Todo determinista, sin llamar a Claude — eso lo hace

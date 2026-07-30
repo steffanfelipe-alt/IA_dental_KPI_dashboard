@@ -529,7 +529,9 @@ def _construir_serie_periodo(
     Devuelve (serie, etiquetas_originales, no_reconocidos):
       - `etiquetas_originales` mapea cada clave canónica a la etiqueta cruda
         tal como venía en la hoja, para poder mostrarla sin perder la clave
-        que hace intersectar series.
+        que hace intersectar series. Cuando varias filas caen en el mismo
+        período (hoja transaccional, una fecha real por fila) se guarda la
+        de fecha más temprana — sólo para mostrar, nunca afecta el cálculo.
       - `no_reconocidos` es {etiqueta_cruda: valor} de las filas rechazadas
         por la guarda 2. Queda visible para auditar — misma filosofía que
         `variables_en_cuarentena`: lo dudoso no desaparece en silencio.
@@ -537,29 +539,78 @@ def _construir_serie_periodo(
         rotulada "Semana 1".."Semana 5"), la serie queda vacía y el llamador
         cae al agregado escalar, que es exactamente lo que ya hace cuando la
         hoja no declara columna de período.
+
+    Bug real (planilla real de clínica): agrupar por la etiqueta CRUDA y
+    recién después normalizar a clave canónica hace que, en una hoja
+    transaccional con una fecha por fila (ej. "2026-03-05", "2026-03-18",
+    "2026-03-25"...), cada fecha sea su propio grupo — el `groupby` nunca
+    ve que tres de esas fechas son "el mismo mes". Al normalizar, las tres
+    colisionan en la misma clave y la última pisa a las anteriores: la serie
+    terminaba con el valor del último día del mes, no la suma/promedio del
+    mes entero (presupuestos aceptados de marzo: 787.000 en vez de
+    8.989.000). Por eso acá se normaliza PRIMERO y se agrupa por la clave
+    canónica — así el `groupby` agrega de verdad lo que corresponde al mismo
+    período, con la `agregacion` declarada (sum suma el mes, avg lo
+    promedia; acumular a mano en un loop rompería avg).
     """
     valores = pd.to_numeric(df_filtrado[col_valor], errors="coerce")
     periodos_crudos = df_filtrado[col_periodo].astype(str).str.strip()
-    agrupado = valores.groupby(periodos_crudos, sort=False)
-    # min_count=1 (guarda 1): un grupo sin ningún valor numérico debe dar
-    # NaN, no 0.0. `mean()` ya se comporta así por default.
-    resultado = agrupado.mean() if agregacion == "avg" else agrupado.sum(min_count=1)
-    resultado = resultado.dropna()
+
+    # Mismo filtro de siempre (celda de período vacía o literalmente "nan"
+    # tras el astype(str)), sólo que ahora se aplica ANTES de agrupar en vez
+    # de después — no cambia qué se descarta, sólo cuándo.
+    validos = (periodos_crudos != "") & (periodos_crudos.str.lower() != "nan")
+    valores = valores[validos]
+    periodos_crudos = periodos_crudos[validos]
+
+    claves = periodos_crudos.map(periodos.normalizar_periodo)
+    es_periodo = claves.notna() & claves.map(periodos.es_canonico)
 
     serie: dict[str, float] = {}
     etiquetas_originales: dict[str, str] = {}
     no_reconocidos: dict[str, float] = {}
-    for etiqueta_cruda, valor in resultado.items():
-        etiqueta_cruda = str(etiqueta_cruda)
-        if not etiqueta_cruda or etiqueta_cruda.lower() == "nan":
-            continue
-        clave = periodos.normalizar_periodo(etiqueta_cruda)
-        if clave is None or not periodos.es_canonico(clave):
-            # Guarda 2: no es un período. Visible, nunca elegible como vigente.
-            no_reconocidos[etiqueta_cruda] = round(float(valor), 4)
-            continue
-        serie[clave] = round(float(valor), 4)
-        etiquetas_originales[clave] = etiqueta_cruda
+
+    if es_periodo.any():
+        valores_periodo = valores[es_periodo]
+        claves_periodo = claves[es_periodo]
+        crudas_periodo = periodos_crudos[es_periodo]
+
+        agrupado = valores_periodo.groupby(claves_periodo, sort=False)
+        # min_count=1 (guarda 1): un grupo sin ningún valor numérico debe
+        # dar NaN, no 0.0. `mean()` ya se comporta así por default.
+        resultado = agrupado.mean() if agregacion == "avg" else agrupado.sum(min_count=1)
+        resultado = resultado.dropna()
+        for clave, valor in resultado.items():
+            serie[clave] = round(float(valor), 4)
+
+        # Etiqueta representativa: la fecha más temprana entre las filas que
+        # aportaron a ese período (dayfirst=True, misma convención argentina
+        # que periodos.py). Si ninguna parsea como fecha real (etiquetas
+        # tipo "Marzo 2026"), se usa la primera fila en orden de aparición
+        # — el dato numérico ya está bien; esto es sólo para mostrar.
+        fechas = pd.to_datetime(crudas_periodo, dayfirst=True, format="mixed", errors="coerce")
+        candidatas = pd.DataFrame({
+            "clave": claves_periodo.to_numpy(),
+            "cruda": crudas_periodo.to_numpy(),
+            "fecha": fechas.to_numpy(),
+        })
+        for clave, grupo in candidatas.groupby("clave", sort=False):
+            if clave not in serie:
+                continue
+            fila = grupo.loc[grupo["fecha"].idxmin()] if grupo["fecha"].notna().any() else grupo.iloc[0]
+            etiquetas_originales[clave] = fila["cruda"]
+
+    if (~es_periodo).any():
+        # Guarda 2, sin cambios de comportamiento: agrupa por etiqueta cruda
+        # (nunca por clave canónica, porque no la tiene) y aplica la misma
+        # agregación — dos filas "TOTAL" idénticas siguen sumando entre sí.
+        valores_resto = valores[~es_periodo]
+        crudas_resto = periodos_crudos[~es_periodo]
+        agrupado_resto = valores_resto.groupby(crudas_resto, sort=False)
+        resultado_resto = agrupado_resto.mean() if agregacion == "avg" else agrupado_resto.sum(min_count=1)
+        resultado_resto = resultado_resto.dropna()
+        for etiqueta_cruda, valor in resultado_resto.items():
+            no_reconocidos[str(etiqueta_cruda)] = round(float(valor), 4)
 
     if not serie:
         return None, {}, no_reconocidos

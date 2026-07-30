@@ -40,6 +40,11 @@ PREGUNTAS_WIZARD: dict[str, PreguntaWizard] = {
         "¿Cuántos turnos agendan por semana, aproximadamente?",
         "number", "P3", adaptada=True),
 
+    "turnos_asistidos": PreguntaWizard(
+        "turnos_asistidos",
+        "De esos turnos agendados, ¿a cuántos asistió el paciente?",
+        "number", "P3", adaptada=True),
+
     "no_shows": PreguntaWizard(
         "no_shows",
         "De esos, ¿cuántos terminan siendo no-show o cancelación de último momento?",
@@ -59,6 +64,12 @@ PREGUNTAS_WIZARD: dict[str, PreguntaWizard] = {
         "monto_presupuestos_aceptados",
         "¿Cuál es el ticket promedio de un tratamiento, o el rango de precio de los más comunes?",
         "decimal", "P21b"),
+
+    "monto_presupuestos_emitidos": PreguntaWizard(
+        "monto_presupuestos_emitidos",
+        "¿Cuál es, aproximadamente, el monto total en pesos de todos los presupuestos "
+        "que armaron por mes (aceptados o no)?",
+        "decimal", "P21b", adaptada=True),
 
     "tratamientos_iniciados": PreguntaWizard(
         "tratamientos_iniciados",

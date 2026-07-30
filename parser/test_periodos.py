@@ -58,6 +58,16 @@ def test_orden_cronologico_ordena_por_clave_no_por_insercion():
     assert orden_cronologico(periodos) == ["2026-01", "2026-02", "2026-03", "2026-04"]
 
 
+def test_fecha_con_hora_pegada_se_normaliza_igual_que_sin_hora():
+    """Fase H4b: el bug real que dejaba `cobros_historico.csv` con un
+    ledger vacío — `normalizar_periodo` rechazaba CUALQUIER fecha con
+    componente de hora ("2024-08-03 09:30:00", el timestamp típico de un
+    export crudo de un sistema real), no solo las de este caso puntual."""
+    assert normalizar_periodo("2024-08-03 09:30:00") == "2024-08"
+    assert normalizar_periodo("2024-08-03 09:30") == "2024-08"
+    assert normalizar_periodo("30-04-2026 14:15:00") == "2026-04"
+
+
 def test_agrupar_por_periodo_agrupa_registros_del_mismo_mes():
     registros = [
         {"fecha": "2-5-25", "valor": 90},

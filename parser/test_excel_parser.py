@@ -6,9 +6,14 @@ Cubre el bug de "AttributeError: 'float' object has no attribute 'values'":
 aplicar_mapeo() no debe guardar un escalar para una variable tipo dict.
 """
 
+import json
+import tempfile
+from pathlib import Path
+from types import SimpleNamespace
+
 import pandas as pd
 
-from extractors.excel_parser import aplicar_mapeo
+from extractors.excel_parser import aplicar_mapeo, parsear_excel, _armar_registros_ledger, _fusionar_ledger
 
 
 def _mapeo_hoja(mapeo: list[dict], hoja=None) -> dict:
@@ -414,6 +419,214 @@ def test_periodos_en_filas_sin_regresion_una_etiqueta_por_mes():
     assert vv.serie == {"2026-01": 4460000.0, "2026-02": 4200000.0, "2026-03": 5940000.0}
     assert vv.valor == 5940000.0
     assert vv.etiquetas_originales == {"2026-01": "Enero 2026", "2026-02": "Febrero 2026", "2026-03": "Marzo 2026"}
+
+
+# ---------------------------------------------------------------------------
+# Fase H6: "condicion" — nunca cubierto por un test hasta ahora
+# ---------------------------------------------------------------------------
+
+def test_condicion_valida_filtra_las_filas():
+    df = pd.DataFrame({"estado": ["aceptado", "pendiente", "aceptado"], "monto": [100, 50, 200]})
+    vv = aplicar_mapeo(df, _mapeo_hoja([
+        {"columna_index": 1, "variable": "monto_presupuestos_aceptados", "agregacion": "sum",
+         "condicion": "estado == 'aceptado'", "confianza": 0.9},
+    ]))["monto_presupuestos_aceptados"]
+    assert vv.valor == 300.0  # 100 + 200, nunca los 350 sin filtrar
+
+
+def test_condicion_que_pandas_no_puede_parsear_descarta_la_regla_no_ejecuta_sin_filtrar():
+    df = pd.DataFrame({"Estado turno": ["aceptado", "pendiente"], "monto": [100, 50]})
+    # la condición referencia "estado" pero la columna real es "Estado turno"
+    # (con espacio, sin backticks) -> pandas.query no puede resolverla
+    variables = aplicar_mapeo(df, _mapeo_hoja([
+        {"columna_index": 1, "variable": "monto_presupuestos_aceptados", "agregacion": "sum",
+         "condicion": "estado == 'aceptado'", "confianza": 0.9},
+    ]))
+    assert "monto_presupuestos_aceptados" not in variables  # nunca 150 (sin filtrar)
+
+
+def test_agregacion_count_where_cuenta_filas_tras_filtrar():
+    df = pd.DataFrame({"estado": ["no show", "asistio", "no show", "asistio"]})
+    vv = aplicar_mapeo(df, _mapeo_hoja([
+        {"columna_index": 0, "variable": "no_shows", "agregacion": "count_where",
+         "condicion": "estado == 'no show'", "confianza": 0.9},
+    ]))["no_shows"]
+    assert vv.valor == 2.0
+
+
+# ---------------------------------------------------------------------------
+# Fase H5: "hoja_estimada" — metodo="estimado" para toda la hoja
+# ---------------------------------------------------------------------------
+
+def test_hoja_estimada_pasa_metodo_estimado_a_sus_variables():
+    df = pd.DataFrame({"tiempo_respuesta_promedio_min": [12]})
+    mapeo = {
+        "hoja": "Operativo", "fila_encabezado": 0, "hoja_estimada": True,
+        "mapeo": [{"columna_index": 0, "variable": "tiempo_respuesta_promedio_min", "agregacion": "sum", "confianza": 0.8}],
+    }
+    vv = aplicar_mapeo(df, mapeo)["tiempo_respuesta_promedio_min"]
+    assert vv.metodo == "estimado"
+
+
+def test_sin_hoja_estimada_se_sigue_infiriendo_como_antes():
+    df = pd.DataFrame({"no_shows": [1, 0, 1]})
+    vv = aplicar_mapeo(df, _mapeo_hoja([
+        {"columna_index": 0, "variable": "no_shows", "agregacion": "sum", "confianza": 0.9},
+    ]))["no_shows"]
+    assert vv.metodo == "medido"  # inferido de fuente="migracion_excel", no forzado
+
+
+def test_hoja_estimada_no_contamina_otra_hoja_de_la_misma_migracion():
+    df_estimada = pd.DataFrame({"automatizaciones_activas": [2]})
+    df_medida = pd.DataFrame({"no_shows": [1, 0, 1]})
+    variables = aplicar_mapeo(df_estimada, {
+        "hoja": "Operativo", "fila_encabezado": 0, "hoja_estimada": True,
+        "mapeo": [{"columna_index": 0, "variable": "automatizaciones_activas", "agregacion": "sum", "confianza": 0.8}],
+    })
+    variables = aplicar_mapeo(df_medida, _mapeo_hoja([
+        {"columna_index": 0, "variable": "no_shows", "agregacion": "sum", "confianza": 0.9},
+    ], hoja="Resumen"), variables)
+    assert variables["automatizaciones_activas"].metodo == "estimado"
+    assert variables["no_shows"].metodo == "medido"
+
+
+# ---------------------------------------------------------------------------
+# Fase H4b: bloque "ledger" en una hoja transaccional
+# ---------------------------------------------------------------------------
+
+def test_armar_registros_un_evento_simple():
+    df = pd.DataFrame({
+        "id_paciente": ["P1001", "P1001", "P1002"],
+        "fecha": ["2026-01-05", "2026-03-10", "2026-02-01"],
+        "monto": [50000, 80000, 30000],
+        "concepto": ["Control", "Limpieza", "Urgencia"],
+    })
+    ledger_bloque = {
+        "columna_paciente_index": 0, "id_estable": True, "columna_fecha_index": 1,
+        "eventos": [{"tipo_evento": "pago", "columna_monto_index": 2, "columna_tratamiento_index": 3}],
+    }
+    registros = _armar_registros_ledger(df, ledger_bloque)
+    assert len(registros) == 3
+    assert registros[0] == {"paciente": "P1001", "fecha": "2026-01-05", "tipo_evento": "pago", "monto": 50000, "tratamiento": "Control"}
+
+
+def test_armar_registros_condicion_genera_dos_eventos_por_fila_aceptada():
+    df = pd.DataFrame({
+        "id_paciente": ["P1001", "P1002"],
+        "fecha": ["2026-01-05", "2026-01-06"],
+        "monto": [100000, 50000],
+        "estado": ["aceptado", "pendiente"],
+    })
+    ledger_bloque = {
+        "columna_paciente_index": 0, "id_estable": True, "columna_fecha_index": 1,
+        "eventos": [
+            {"tipo_evento": "presupuesto_emitido", "columna_monto_index": 2},
+            {"tipo_evento": "presupuesto_aceptado", "columna_monto_index": 2, "condicion": "estado == 'aceptado'"},
+        ],
+    }
+    registros = _armar_registros_ledger(df, ledger_bloque)
+    tipos_p1001 = sorted(r["tipo_evento"] for r in registros if r["paciente"] == "P1001")
+    tipos_p1002 = sorted(r["tipo_evento"] for r in registros if r["paciente"] == "P1002")
+    assert tipos_p1001 == ["presupuesto_aceptado", "presupuesto_emitido"]
+    assert tipos_p1002 == ["presupuesto_emitido"]
+
+
+def test_armar_registros_condicion_irresoluble_descarta_solo_ese_evento():
+    df = pd.DataFrame({"id": ["P1"], "fecha": ["2026-01-01"], "monto": [100], "Estado turno": ["aceptado"]})
+    ledger_bloque = {
+        "columna_paciente_index": 0, "id_estable": True, "columna_fecha_index": 1,
+        "eventos": [
+            {"tipo_evento": "pago", "columna_monto_index": 2},
+            {"tipo_evento": "presupuesto_aceptado", "columna_monto_index": 2, "condicion": "estado == 'aceptado'"},
+        ],
+    }
+    registros = _armar_registros_ledger(df, ledger_bloque)
+    assert [r["tipo_evento"] for r in registros] == ["pago"]  # nunca el "aceptado" sin filtrar
+
+
+def test_armar_registros_sin_columnas_de_ledger_da_vacio():
+    df = pd.DataFrame({"a": [1]})
+    assert _armar_registros_ledger(df, {}) == []
+
+
+def test_fusionar_ledger_junta_eventos_del_mismo_paciente_de_dos_hojas():
+    existente = {"P1": [{"periodo": "2026-01", "tipo_evento": "turno_asistido"}]}
+    nuevo = {"P1": [{"periodo": "2026-02", "tipo_evento": "pago"}], "P2": [{"periodo": "2026-01", "tipo_evento": "pago"}]}
+    fusionado = _fusionar_ledger(existente, nuevo)
+    assert [e["periodo"] for e in fusionado["P1"]] == ["2026-01", "2026-02"]
+    assert len(fusionado["P2"]) == 1
+
+
+def test_fusionar_ledger_sin_existente_devuelve_el_nuevo():
+    nuevo = {"P1": [{"periodo": "2026-01", "tipo_evento": "pago"}]}
+    assert _fusionar_ledger(None, nuevo) == nuevo
+
+
+class _RespuestaFalsa:
+    def __init__(self, payload: dict):
+        self.content = [SimpleNamespace(type="text", text=json.dumps(payload))]
+        self.stop_reason = "end_turn"
+
+
+class _ClienteFalso:
+    def __init__(self, payload: dict):
+        self.messages = SimpleNamespace(create=lambda **kwargs: _RespuestaFalsa(payload))
+
+
+def _csv_temporal(contenido: str) -> str:
+    f = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csv", newline="")
+    f.write(contenido)
+    f.close()
+    return f.name
+
+
+def test_parsear_excel_end_to_end_arma_ledger_con_mapeo_vacio():
+    """El caso real de cobros_historico.csv: ninguna columna es un total
+    agregable (todo es historial por paciente), "mapeo" viene vacío y
+    únicamente el bloque "ledger" trae la información — antes de H4b la
+    guarda `not mapeo_hoja.get("mapeo")` salteaba la hoja entera."""
+    path = _csv_temporal(
+        "id_paciente,fecha_hora,monto_ars,concepto\n"
+        "P1001,2026-01-05,50000,Control\n"
+        "P1001,2026-03-10,80000,Limpieza\n"
+        "P1002,2026-02-01,30000,Urgencia\n"
+    )
+    payload = {"hojas": [{
+        "hoja": None, "fila_encabezado": 0, "orientacion": "transaccional",
+        "mapeo": [],
+        "ledger": {
+            "columna_paciente_index": 0, "id_estable": True, "columna_fecha_index": 1,
+            "eventos": [{"tipo_evento": "pago", "columna_monto_index": 2, "columna_tratamiento_index": 3, "confianza": 0.85}],
+        },
+    }]}
+    variables, _ = parsear_excel(path, client=_ClienteFalso(payload))
+    ledger = variables["ledger_pacientes"].valor
+    assert set(ledger.keys()) == {"P1001", "P1002"}
+    assert len(ledger["P1001"]) == 2
+    assert len(ledger["P1002"]) == 1
+    assert variables["ledger_pacientes"].confianza == 0.85
+    assert variables["ledger_pacientes"].fuente == "migracion_excel"
+    Path(path).unlink()
+
+
+def test_parsear_excel_ledger_y_mapeo_normal_conviven_en_la_misma_hoja():
+    path = _csv_temporal(
+        "id_paciente,fecha,monto\n"
+        "P1001,2026-01-05,50000\n"
+        "P1002,2026-01-06,30000\n"
+    )
+    payload = {"hojas": [{
+        "hoja": None, "fila_encabezado": 0, "orientacion": "transaccional", "columna_periodo": 1,
+        "mapeo": [{"columna_index": 2, "variable": "monto_cobrado", "agregacion": "sum", "confianza": 0.9}],
+        "ledger": {
+            "columna_paciente_index": 0, "id_estable": True, "columna_fecha_index": 1,
+            "eventos": [{"tipo_evento": "pago", "columna_monto_index": 2}],
+        },
+    }]}
+    variables, _ = parsear_excel(path, client=_ClienteFalso(payload))
+    assert variables["monto_cobrado"].valor == 80000.0
+    assert set(variables["ledger_pacientes"].valor.keys()) == {"P1001", "P1002"}
+    Path(path).unlink()
 
 
 if __name__ == "__main__":

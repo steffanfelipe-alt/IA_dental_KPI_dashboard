@@ -12,6 +12,8 @@ from catalogo_tecnologico import (
     ETAPAS,
     INTERVENCIONES,
     INTERVENCIONES_POR_ETAPA,
+    SEMANAS_EVALUACION_POR_TIPO,
+    Intervencion,
     calcular_addressability,
     mapear_oportunidades,
 )
@@ -126,6 +128,83 @@ def test_mapear_oportunidades_incluye_addressability_por_contexto():
     oportunidades = mapear_oportunidades(diagnosticos, contexto_clinica={"P45": "Usamos una planilla aparte para la agenda"})
     agente = next(o for o in oportunidades if o.intervencion.id == "agente_agendamiento_24_7")
     assert agente.addressability == 0.3
+
+
+# ---------------------------------------------------------------------------
+# Fase H2: periodo_evaluacion_semanas — el único campo que quedaba
+# esperando confirmación del usuario, ahora derivado de `tipo`.
+# ---------------------------------------------------------------------------
+
+def test_las_35_intervenciones_tienen_periodo_de_evaluacion_poblado():
+    assert len(INTERVENCIONES) == 35
+    sin_poblar = [i.id for i in INTERVENCIONES if i.periodo_evaluacion_semanas is None]
+    assert sin_poblar == []
+
+
+def test_periodo_de_evaluacion_corresponde_al_tipo():
+    for i in INTERVENCIONES:
+        assert i.periodo_evaluacion_semanas == SEMANAS_EVALUACION_POR_TIPO[i.tipo], i.id
+
+
+def test_periodo_de_evaluacion_explicito_no_se_pisa():
+    intervencion = Intervencion(
+        "x", "captacion", "test", "proceso", "metrica", periodo_evaluacion_semanas=99,
+    )
+    assert intervencion.periodo_evaluacion_semanas == 99
+
+
+# ---------------------------------------------------------------------------
+# Fase I3: el chatbot dejó de quedar sistemáticamente último para KPI 2 —
+# ni por keyword-match injusto (requiere_integracion explícito) ni porque
+# el catálogo tenía dos intervenciones mal etiquetadas compitiendo con él.
+# ---------------------------------------------------------------------------
+
+def test_chatbot_ya_no_compite_con_intervenciones_mal_etiquetadas_en_kpi_2():
+    """Antes de I3, retargeting_formularios y seguimiento_leads_sin_confirmar
+    también apuntaban a kpi_objetivo=2 y ganaban por addressability más
+    alto (un artefacto de redacción) — el chatbot quedaba sistemáticamente
+    tercero. Reetiquetadas a KPI 3 (que es lo que de verdad mueven), sólo
+    quedan para KPI 2 las dos intervenciones que genuinamente son de
+    primera respuesta: el chatbot y el agente 24/7 (vía kpi secundario)."""
+    diagnosticos = [_diagnostico(2, EstadoEvidencia.PROBLEM)]
+    oportunidades = mapear_oportunidades(diagnosticos)
+    ids = {o.intervencion.id for o in oportunidades}
+    assert ids == {"chatbot_captacion_redes", "agente_agendamiento_24_7"}
+    assert "retargeting_formularios" not in ids
+    assert "seguimiento_leads_sin_confirmar" not in ids
+
+
+def test_agente_24_7_aparece_para_su_kpi_principal_y_para_el_secundario():
+    """El agente de agendamiento 24/7 no sólo sube la conversión (KPI 3,
+    su kpi_objetivo) — al responder al instante también baja el tiempo de
+    primera respuesta (KPI 2, declarado en kpis_secundarios)."""
+    for kpi_id in (2, 3):
+        diagnosticos = [_diagnostico(kpi_id, EstadoEvidencia.PROBLEM)]
+        oportunidades = mapear_oportunidades(diagnosticos)
+        ids = [o.intervencion.id for o in oportunidades]
+        assert "agente_agendamiento_24_7" in ids, f"no apareció para KPI {kpi_id}"
+
+
+def test_requiere_integracion_explicito_gana_al_keyword_match():
+    """retargeting_formularios declara requiere_integracion=True aunque su
+    condicion ("Necesita tracking/webhook en la landing") no contiene
+    ninguna palabra del keyword-match viejo ("api"/"integrad"/"conectad"/
+    "sistema") — antes de I3 esto le daba addressability=1.0 de forma
+    injusta frente al chatbot, que sí tiene "API" en el texto."""
+    intervencion = next(i for i in INTERVENCIONES if i.id == "retargeting_formularios")
+    assert intervencion.requiere_integracion is True
+    assert calcular_addressability(intervencion, {}) == 0.6  # neutro, no 1.0
+
+
+def test_intervencion_sin_requiere_integracion_declarado_cae_al_keyword_match():
+    """Retrocompatibilidad: una intervención con requiere_integracion=None
+    (default) sigue usando el keyword-match de siempre sobre `condicion`."""
+    intervencion = Intervencion(
+        "x", "captacion", "test", "proceso", "metrica",
+        condicion="Acceso a API de un sistema externo",
+    )
+    assert intervencion.requiere_integracion is None
+    assert calcular_addressability(intervencion, {}) == 0.6  # keyword "api" matchea
 
 
 if __name__ == "__main__":

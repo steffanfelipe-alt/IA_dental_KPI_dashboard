@@ -344,7 +344,18 @@ METRICAS: dict[str, MetricaInfo] = {
     "costo_hora_sillon": MetricaInfo(
         "Costo por hora-sillón",
         "Costo operativo en ARS de una hora de sillón ocupado (alquiler, personal, etc. prorrateado).",
-        "monto_ars",
+        # Fase G3: es una TARIFA horaria, no un monto total — KPI 20 ya la
+        # multiplica por duracion_tratamiento_horas, así que la fórmula
+        # siempre asumió esto; sólo la declaración de unidad estaba mal
+        # (era "monto_ars", la misma que un total mensual). Con esto deja
+        # de generar cruces.py: ninguna entrada de OPERACIONES_LEGALES usa
+        # "monto_ars/hora" como operando, así que ya no compite como un
+        # monto más contra monto_cobrado/monto_facturado.
+        "monto_ars/hora",
+        no_confundir_con=(
+            "un costo operativo MENSUAL total (alquiler + sueldos del mes, etc.) — "
+            "eso no es esta variable, aunque venga en la misma hoja"
+        ),
     ),
     "duracion_tratamiento_horas": MetricaInfo(
         "Duración por tipo de tratamiento",
@@ -478,6 +489,21 @@ ETAPAS_EMBUDO: list[str] = [
     "tratamientos_iniciados",
     "tratamientos_completados",
     "pacientes_dados_alta",
+]
+
+# Fase G4: qué conteos tiene sentido usar como DENOMINADOR de un monto
+# ($ ÷ conteo). Sin esta lista, `cruces.generar_cruces_algebraicos`
+# generaba monto÷conteo para TODO par posible — incluido "Monto cobrado
+# por No-shows", que no es una métrica: no_shows nunca es una base sobre
+# la que dividir un ingreso. Whitelist, no blacklist, mismo criterio que
+# ETAPAS_EMBUDO: declarar lo que vale es más robusto que enumerar lo que
+# no. Son los conteos que representan volumen de trabajo o demanda — las
+# etapas del embudo (ya declaradas arriba) más los dos conteos "totales"
+# que no son una etapa secuencial pero sí una base válida de división.
+DENOMINADORES_VOLUMEN: list[str] = [
+    *ETAPAS_EMBUDO,
+    "pacientes_atendidos_periodo",
+    "pacientes_nuevos_captados",
 ]
 
 # (unidad_a, operación, unidad_b) -> unidad del resultado. Todo lo que no

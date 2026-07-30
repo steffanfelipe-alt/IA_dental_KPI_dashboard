@@ -24,17 +24,21 @@ proyecto — nunca hardcodeada acá.
 """
 
 import os
+import subprocess
 import tempfile
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import streamlit as st
 from dotenv import load_dotenv
 
-from pipeline import EXTRACTOR_POR_EXTENSION, procesar_migracion
+from pipeline import EXTRACTOR_POR_EXTENSION, procesar_migracion, resolver_conflicto
 from interpretacion import interpretar_clinica, interpretar_kpi, interpretar_panel
 from cruces_propuestos import proponer_cruces
-from formato import fmt_por_unidad
+from formato import fmt_ars, fmt_por_unidad
 from schema import KPI_BY_ID
+from explicaciones import explicar_cuarentena, explicar_derivada, explicar_discrepancia, nombre_humano
 
 try:
     import anthropic
@@ -43,8 +47,48 @@ except ImportError:
 
 load_dotenv()
 
+
+def _server_iniciado_en() -> Optional[datetime]:
+    """Fase I1: Streamlit re-ejecuta este script en cada interacción, pero los
+    módulos importados (pipeline, excel_parser, vision_parser...) quedan
+    cacheados en sys.modules desde que el PROCESO arrancó — un `streamlit run`
+    dejado corriendo de una sesión anterior sigue sirviendo código viejo aunque
+    los .py en disco ya cambiaron. `ps -o lstart=` da la hora real de arranque
+    del proceso (no hay /proc en macOS para leerlo sin subprocess)."""
+    try:
+        salida = subprocess.check_output(
+            ["ps", "-o", "lstart=", "-p", str(os.getpid())], text=True,
+        ).strip()
+        return datetime.strptime(salida, "%a %b %d %H:%M:%S %Y")
+    except Exception:
+        return None
+
+
+def _codigo_mas_reciente_que(inicio: datetime) -> Optional[float]:
+    """Mtime más nuevo entre los .py del parser (sin bajar a extractors/ni
+    tests — alcanza con la carpeta principal para detectar un proceso viejo)."""
+    base = Path(__file__).parent
+    mtimes = [p.stat().st_mtime for p in base.glob("*.py")] + [p.stat().st_mtime for p in base.glob("extractors/*.py")]
+    if not mtimes:
+        return None
+    mas_nuevo = max(mtimes)
+    return mas_nuevo if mas_nuevo > inicio.timestamp() else None
+
+
 st.set_page_config(page_title="Probar parser — Agencia IA Dental", layout="wide")
 st.title("Probar el parser en vivo")
+
+_inicio = _server_iniciado_en()
+if _inicio is not None:
+    _mtime_nuevo = _codigo_mas_reciente_que(_inicio)
+    if _mtime_nuevo is not None:
+        st.warning(
+            f"⚠️ Este servidor arrancó el {_inicio:%Y-%m-%d %H:%M} y hay código modificado "
+            f"después (el {datetime.fromtimestamp(_mtime_nuevo):%Y-%m-%d %H:%M}). Streamlit "
+            f"re-ejecuta este archivo en cada interacción, pero los módulos importados "
+            f"(pipeline, extractors/...) quedan en caché desde que el proceso arrancó — "
+            f"reiniciá `streamlit run` para ver los cambios reales."
+        )
 
 api_key = os.environ.get("ANTHROPIC_API_KEY")
 if not api_key or anthropic is None:
@@ -65,6 +109,10 @@ if "cruces_propuestos_decisiones" not in st.session_state:
     st.session_state.cruces_propuestos_decisiones = {}
 
 st.subheader("1. Migración de datos")
+# Fase I5: antes nunca se pasaba — el informe de la sección 8a salía sin
+# nombre de clínica. Vive acá (sección 1) y no en la 8, mismo criterio que
+# las respuestas de la Guía: es un dato de entrada, no un adorno del informe.
+studio_nombre = st.text_input("Nombre de la clínica (opcional, para el informe de la sección 8a)")
 extensiones = sorted(EXTRACTOR_POR_EXTENSION.keys())
 archivos_subidos = st.file_uploader(
     f"Subí Excel/CSV/foto/PDF ({', '.join(extensiones)}). Dejalo vacío y procesá "
@@ -105,6 +153,24 @@ def _md(texto: str) -> str:
     renderizaba el "100.000, 2026-02: " en itálica matemática).
     Sólo hace falta en contextos markdown: `st.dataframe` no los interpreta."""
     return texto.replace("$", "\\$")
+
+
+def _parsear_valor_manual(texto: str):
+    """Intenta int, después float, y si no, deja el texto tal cual — mismo
+    criterio laxo que el resto del harness: no se inventa un tipo, se
+    prueba en orden y se usa lo primero que parsea."""
+    texto = texto.strip()
+    if not texto:
+        return None
+    try:
+        return int(texto)
+    except ValueError:
+        pass
+    try:
+        return float(texto)
+    except ValueError:
+        pass
+    return texto
 
 
 if st.button("Procesar migración", type="primary"):
@@ -177,11 +243,16 @@ if resultado:
             "Datos que se extrajeron pero no pasaron las guardas de validacion.py o "
             "reconciliacion.py — no se usan para calcular ningún KPI hasta que se confirmen."
         )
-        st.dataframe(
-            [{"Variable": v, "Valor extraído": info["valor"], "Fuente": info["fuente"], "Motivo": info["motivo"]}
-             for v, info in resultado["variables_en_cuarentena"].items()],
-            use_container_width=True,
-        )
+        for v, info in resultado["variables_en_cuarentena"].items():
+            resuelta = bool(info.get("reemplazada_por_derivacion"))
+            with st.container(border=True):
+                titulo = f"{'✅' if resuelta else '⚠️'} **{nombre_humano(v)}**"
+                (st.success if resuelta else st.warning)(f"{titulo} — {_md(explicar_cuarentena(v, info))}")
+                with st.expander("Ver detalle técnico"):
+                    st.markdown(f"- **Variable**: `{v}`")
+                    st.markdown(f"- **Valor extraído**: {info['valor']!r}")
+                    st.markdown(f"- **Fuente**: {info['fuente']}")
+                    st.markdown(f"- **Motivo técnico**: {info['motivo']}")
 
     if resultado.get("variables_derivadas"):
         st.subheader("2e. Variables derivadas de una tasa")
@@ -190,18 +261,24 @@ if resultado:
             "se despejaron algebraicamente. Se muestran siempre como dato a confirmar, nunca como "
             "valor observado."
         )
-        st.dataframe(
-            [{"Variable": d["variable"], "Valor derivado": d["valor"],
-              "Despejada de": d["desde_denominador"], "Tasa declarada (%)": d["tasa_declarada"],
-              "KPI origen": d["kpi_id"]}
-             for d in resultado["variables_derivadas"]],
-            use_container_width=True,
-        )
+        for d in resultado["variables_derivadas"]:
+            with st.container(border=True):
+                st.info(f"**{nombre_humano(d['variable'])}** — {_md(explicar_derivada(d))}")
+                with st.expander("Ver detalle técnico"):
+                    st.markdown(
+                        f"- **Variable**: `{d['variable']}` = {d['valor']!r}\n"
+                        f"- **Despejada de**: `{d['desde_denominador']}` × tasa declarada "
+                        f"{d['tasa_declarada']}% del KPI {d['kpi_id']} ({d.get('kpi_nombre') or '—'})"
+                    )
 
     if resultado.get("discrepancias_reconciliacion"):
         st.subheader("2d. Discrepancias de reconciliación")
         st.caption("La tasa que calcula el KPI no coincide con la que la propia planilla ya declaraba al lado.")
-        st.dataframe(resultado["discrepancias_reconciliacion"], use_container_width=True)
+        for d in resultado["discrepancias_reconciliacion"]:
+            with st.container(border=True):
+                st.warning(_md(explicar_discrepancia(d)))
+                with st.expander("Ver detalle técnico"):
+                    st.json(d)
 
     filas_rechazadas = [
         {"Variable": nombre, "Etiqueta en la hoja": etiqueta, "Valor que traía": valor}
@@ -225,12 +302,19 @@ if resultado:
         c1.metric("Completitud", f"{calidad.completitud_pct}%")
         c2.metric("Consistencia", f"{calidad.consistencia_pct}%")
         c3.metric(
+            # Fase I2: confianza_promedio ya viene en escala 0-100 (calidad.py),
+            # igual que completitud_pct y consistencia_pct — antes se mostraba
+            # sin "%" y con :.2f, se leía "85.00" al lado de "60.0%".
             "Confianza prom.",
-            "—" if calidad.confianza_promedio is None else f"{calidad.confianza_promedio:.2f}",
+            "—" if calidad.confianza_promedio is None else f"{calidad.confianza_promedio:.0f}%",
         )
         c4.metric("En cuarentena", calidad.datos_en_cuarentena)
         if calidad.kpis_afectados:
-            st.caption(f"KPIs afectados por datos en cuarentena: {calidad.kpis_afectados}")
+            nombres = ", ".join(
+                f"{KPI_BY_ID[k].nombre} (KPI {k})" if k in KPI_BY_ID else f"KPI {k}"
+                for k in calidad.kpis_afectados
+            )
+            st.caption(f"KPIs afectados por datos en cuarentena: {nombres}")
 
     kpis_parciales = resultado.get("kpis_parciales") or {}
     kpis_esperando_facturas = resultado.get("kpis_esperando_facturas") or []
@@ -276,16 +360,101 @@ if resultado:
 
     st.subheader("4. Conflictos pendientes de confirmar")
     if resultado["conflictos_pendientes"]:
-        for c in resultado["conflictos_pendientes"]:
+        for i, c in enumerate(resultado["conflictos_pendientes"]):
             if c.get("tipo") == "cobertura_distinta":
                 # Fase E: dos fuentes con cobertura temporal distinta (una
                 # con fecha, otra sin) — st.info en vez de st.warning porque
                 # la pregunta misma ya aclara que puede no ser un error de
                 # datos, sólo dos meses distintos.
                 st.info(f"🗓️ **{c['variable']}**: {c['pregunta']}")
+            elif c.get("tipo") == "contradice_confirmado":
+                # Fase H1: un valor ya confirmado por el dueño, contradicho
+                # por un archivo nuevo — sigue ganando la confirmación
+                # (coverage.py ya la resolvió), esto es sólo el aviso.
+                st.warning(f"🔒 **{c['variable']}**: {c['pregunta']}")
             else:
                 st.warning(f"⚠️ **{c['variable']}**: {c['pregunta']}")
-            st.json(c["opciones"])
+
+            # Fase I7: antes era un st.json crudo de las 4 claves viejas.
+            # Ahora una tarjeta por candidato con la cuenta completa —
+            # trazabilidad.explicar() ya sabe armar el texto, y desde I7
+            # _candidato() también manda serie/período/etiquetas cuando
+            # existen.
+            if "tipo" in c:
+                cols = st.columns(len(c["opciones"]))
+                for col, cand in zip(cols, c["opciones"]):
+                    with col:
+                        st.markdown(f"**{cand['valor']}**")
+                        st.caption(f"{cand.get('fuente', '?')} — archivo: {cand.get('archivo') or '—'}")
+                        st.markdown(_md(cand.get("explicacion", "")))
+                        if "serie" in cand:
+                            st.caption(f"Serie: {cand['serie']}")
+                            st.caption(f"Período vigente: {cand.get('periodo_vigente')}")
+            else:
+                st.json(c["opciones"])  # matches de identidad de paciente: otra forma, sin candidatos
+
+            # Fase G5b: pipeline.resolver_conflicto ya existía y no
+            # gastaba API (corre con archivos=[]) — sólo faltaba un botón.
+            # Sólo para conflictos reales de variable (traen "tipo"); los
+            # matches de identidad de paciente (sin "tipo", más abajo en
+            # conflictos_pendientes) son otro mecanismo, fuera de acá.
+            if "tipo" in c and c.get("permite_valor_manual"):
+                # Fase I8: antes era un st.radio — sólo dejaba elegir UNO.
+                # Ahora un checkbox por candidato: elegir 2+ los fusiona
+                # (conflictos.fusionar_candidatos) en vez de forzar a
+                # descartar el resto.
+                seleccionados: list[int] = []
+                for idx, cand in enumerate(c["opciones"]):
+                    etiqueta = f"{cand['valor']} — {cand.get('fuente', '?')} (archivo: {cand.get('archivo') or '—'})"
+                    if st.checkbox(etiqueta, key=f"check_conflicto_{i}_{idx}"):
+                        seleccionados.append(idx)
+
+                # Si se eligieron 2+ y alguno no tiene serie propia, hay
+                # que preguntar a qué período corresponde — el sistema no
+                # lo puede adivinar (ver docstring de fusionar_candidatos).
+                periodos_de_escalares: dict[int, str] = {}
+                if len(seleccionados) > 1:
+                    for idx in seleccionados:
+                        cand = c["opciones"][idx]
+                        if "serie" not in cand:
+                            periodo_str = st.text_input(
+                                f"¿A qué período corresponde {cand['valor']} "
+                                f"({cand.get('fuente', '?')})? (formato \"2026-03\")",
+                                key=f"periodo_conflicto_{i}_{idx}",
+                            )
+                            if periodo_str.strip():
+                                periodos_de_escalares[idx] = periodo_str.strip()
+
+                valor_manual_str = st.text_input(
+                    "…o un valor manual (opcional, gana sobre la selección de arriba — "
+                    "ignora los checkboxes)",
+                    key=f"valor_manual_conflicto_{i}",
+                )
+                if st.button(f"Resolver {c['variable']}", key=f"resolver_conflicto_{i}"):
+                    valor_manual = _parsear_valor_manual(valor_manual_str)
+                    kwargs = dict(
+                        respuestas_diagnostico=_parsear_respuestas() or None,  # G5a: si no, se pierde el diagnóstico
+                    )
+                    if valor_manual is not None:
+                        kwargs["valor_manual"] = valor_manual
+                    elif seleccionados:
+                        kwargs["candidatos"] = [c["opciones"][idx] for idx in seleccionados]
+                        # periodos_de_escalares usa índices dentro de la
+                        # lista fusionada, no dentro de c["opciones"] —
+                        # hay que remapear.
+                        kwargs["periodos_de_escalares"] = {
+                            seleccionados.index(idx): periodo
+                            for idx, periodo in periodos_de_escalares.items()
+                        }
+                    else:
+                        st.warning("Elegí al menos un candidato o escribí un valor manual.")
+                        kwargs = None
+                    if kwargs is not None:
+                        st.session_state.resultado_migracion = resolver_conflicto(
+                            c["variable"], resultado["variables"], **kwargs,
+                        )
+                        st.rerun()
+            st.divider()
     else:
         st.caption("Ninguno.")
 
@@ -359,6 +528,9 @@ if resultado:
     if not oportunidades:
         st.caption("Ninguna — depende del diagnóstico de la sección 6.")
     else:
+        # Fase I4: tabla resumen para escanear de un vistazo — el detalle
+        # completo (por qué se recomienda, qué necesita, cuándo medirla)
+        # va en la tarjeta expandible de abajo, no acá.
         st.dataframe(
             [{
                 "Score": round(o.score, 3),
@@ -366,12 +538,38 @@ if resultado:
                 "Tipo": o.oportunidad.intervencion.tipo,
                 "Etapa": o.oportunidad.intervencion.etapa,
                 "KPI": o.kpi_id,
-                "Métrica objetivo": o.oportunidad.intervencion.metrica_objetivo,
                 "Addressability": round(o.oportunidad.addressability, 2),
-                "Condición": o.oportunidad.intervencion.condicion,
             } for o in oportunidades],
             use_container_width=True,
         )
+
+        for o in oportunidades:
+            interv = o.oportunidad.intervencion
+            diag = o.oportunidad.diagnostico
+            with st.expander(f"{interv.nombre} — score {round(o.score, 3)}"):
+                # Por qué: el problema detectado + las hipótesis de causa
+                # probable que ya calculó diagnostico.py (Fase 4-6) — antes
+                # esto existía en el payload y la sección 7 no lo mostraba.
+                st.markdown(f"**Por qué te lo recomendamos**")
+                st.markdown(f"- {diag.problema}")
+                for hip in diag.hipotesis:
+                    st.markdown(f"- {hip.causa_probable} _(confianza {hip.confianza})_")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**Qué hace**")
+                    st.markdown(interv.como_funciona or "—")
+                    st.markdown("**Qué necesita**")
+                    st.markdown(interv.condicion)
+                    if interv.requiere_compliance:
+                        st.warning(f"⚖️ {interv.requiere_compliance}")
+                with col2:
+                    st.markdown("**Qué mejora**")
+                    st.markdown(f"{interv.beneficio or '—'}\n\n_(métrica: {interv.metrica_objetivo})_")
+                    st.markdown("**Cuándo medir si funcionó**")
+                    st.markdown(f"A las {interv.periodo_evaluacion_semanas} semanas de implementada.")
+                    if interv.durabilidad:
+                        st.info(f"⚠️ Riesgo conocido: {interv.durabilidad}")
 
     st.divider()
     st.subheader("8. Interpretación del asistente")
@@ -397,6 +595,16 @@ if resultado:
                         oportunidades_priorizadas=oportunidades or [],
                         calidad_datos=resultado.get("calidad_datos"),
                         respuestas_diagnostico=respuestas,
+                        studio_nombre=studio_nombre or None,
+                        # Fase I5: antes el informe sólo veía calidad_datos
+                        # agregado — ahora también los casos puntuales que
+                        # ya se le explican al dueño en las secciones 2c/
+                        # 2d/2e, para que la sección 7 del informe pueda
+                        # nombrarlos en vez de hablar en abstracto.
+                        variables_en_cuarentena=resultado.get("variables_en_cuarentena"),
+                        discrepancias_reconciliacion=resultado.get("discrepancias_reconciliacion"),
+                        variables_derivadas=resultado.get("variables_derivadas"),
+                        conflictos_pendientes=resultado.get("conflictos_pendientes"),
                         client=client,
                     )
                 except Exception as e:
@@ -551,3 +759,64 @@ if resultado:
                     if col_descartar.button("❌ Descartar", key=f"descartar_{i}"):
                         decisiones[i] = "rechazado"
                         st.rerun()
+
+    st.subheader("10. Métricas de paciente (ledger_pacientes)")
+    st.caption(
+        "metricas_paciente.py (Fase H4c): 17 métricas longitudinales que las 20 KPIFormula "
+        "fijas no pueden expresar (necesitan historial por paciente, no un agregado "
+        "mensual) — determinístico, sin API. Sección separada a propósito, mismo criterio "
+        "que la 9: contrato distinto, nunca mezclado con los KPIs de arriba."
+    )
+    metricas_paciente = resultado.get("metricas_paciente")
+    if metricas_paciente is None:
+        st.caption(
+            "Sin datos todavía — ningún archivo de esta migración trajo un historial por "
+            "paciente (identificador de paciente + fecha por fila, ej. un export de cobros "
+            "o de turnos)."
+        )
+    else:
+        ltv = metricas_paciente["ltv_real"]
+        concentracion = metricas_paciente["concentracion_ingresos"]
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Pacientes con LTV registrado", len(ltv))
+        col2.metric("LTV total", fmt_ars(sum(ltv.values())) if ltv else "-")
+        col3.metric(
+            "Concentración de ingresos",
+            f"{concentracion['share_ingresos'] * 100:.0f}% en el top {concentracion['n_pacientes_top']}"
+            if concentracion else "-",
+        )
+
+        etiquetas = {
+            "no_show_recurrente": "No-show recurrente (≥30% de sus turnos, mín. 3)",
+            "pacientes_en_riesgo_de_fuga": "En riesgo de fuga (6 a 14 meses sin actividad)",
+            "porcentaje_base_inactiva": "% de la base inactiva (14+ meses sin actividad)",
+            "dias_desde_ultimo_contacto": "Días desde el último contacto",
+            "ltv_real": "LTV real (suma de pagos)",
+            "ticket_promedio_por_cliente": "Ticket promedio por paciente",
+            "concentracion_ingresos": "Concentración de ingresos (top 10%)",
+            "mix_tratamientos_por_paciente": "Mix de tratamientos por paciente",
+            "retencion_por_cohorte_alta": "Retención por cohorte de alta (%)",
+            "intervalo_medio_entre_visitas": "Intervalo medio entre visitas (meses)",
+            "abandono_a_mitad_tratamiento": "Tratamiento abandonado a mitad de camino",
+            "nuevos_vs_recurrentes": "Nuevos vs. recurrentes (período vigente)",
+            "atribucion_referidos": "Referidos traídos, por paciente",
+            "tasa_segunda_visita": "Tasa de segunda visita (%)",
+            "velocidad_presupuesto_a_aceptacion": "Meses de presupuesto a aceptación",
+            "multi_tratamiento_vs_mono": "Multi-tratamiento vs. mono-tratamiento (%)",
+            "estacionalidad_observada_por_paciente": "No-shows por mes calendario",
+        }
+        with st.expander("Ver las 17 métricas completas"):
+            for clave, etiqueta in etiquetas.items():
+                valor = metricas_paciente.get(clave)
+                st.markdown(f"**{etiqueta}**")
+                if valor is None:
+                    st.caption("Sin datos suficientes para calcularla.")
+                elif isinstance(valor, dict) and valor:
+                    st.dataframe(
+                        [{"Paciente / clave": k, "Valor": v} for k, v in valor.items()],
+                        use_container_width=True,
+                    )
+                elif isinstance(valor, list) and valor:
+                    st.write(valor)
+                else:
+                    st.caption("Vacío — sin eventos del tipo que esta métrica necesita.")

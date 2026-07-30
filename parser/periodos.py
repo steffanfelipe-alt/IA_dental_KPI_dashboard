@@ -59,8 +59,16 @@ def _fecha_desde_etiqueta(etiqueta: str) -> Optional[date]:
     if not s:
         return None
 
+    # Una fecha (cualquiera de los tres formatos de abajo) puede venir con
+    # hora pegada atrás — "2026-04-15 14:30:00", "2026-04-15T14:30" — como
+    # la trae un export crudo de un sistema real (timestamp de fila, no una
+    # etiqueta de período tipeada a mano). La hora no aporta nada a la
+    # granularidad de mes/semana que esta función resuelve, así que se
+    # descarta, no se rechaza la fecha entera por su presencia.
+    _HORA_OPCIONAL = r"(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?"
+
     # Ya canónico o casi: "2026-04" o una fecha completa "2026-04-15".
-    m = re.fullmatch(r"(\d{4})-(\d{1,2})(?:-(\d{1,2}))?", s)
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})(?:-(\d{1,2}))?" + _HORA_OPCIONAL, s)
     if m:
         anio, mes = int(m.group(1)), int(m.group(2))
         dia = int(m.group(3)) if m.group(3) else 1
@@ -83,7 +91,7 @@ def _fecha_desde_etiqueta(etiqueta: str) -> Optional[date]:
     # NUNCA se interpreta como mes-día (mm-dd-aa): una planilla armada por
     # una clínica argentina usa el formato local, y adivinar mal acá
     # confundiría meses silenciosamente en cualquier fecha con día <= 12.
-    m = re.fullmatch(r"(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})", s)
+    m = re.fullmatch(r"(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})" + _HORA_OPCIONAL, s)
     if m:
         dia, mes = int(m.group(1)), int(m.group(2))
         try:

@@ -205,14 +205,59 @@ def test_algebra_genera_monto_dividido_conteo():
 
 
 def test_algebra_monto_menos_monto_no_duplica_direccion_espejada():
-    """monto_a - monto_b y monto_b - monto_a no deben generarse ambas —
-    orden alfabético fijo, un solo cruce por par."""
+    """monto_a - monto_b y monto_b - monto_a no deben generarse ambas — un
+    solo cruce por par (la dirección la elige la magnitud, ver Fase G4;
+    lo que este test protege es que nunca sean dos)."""
     variables = {
         "monto_cobrado": _vv(600000, {"2026-01": 600000.0, "2026-02": 650000.0}),
         "gasto_captacion": _vv(50000, {"2026-01": 50000.0, "2026-02": 55000.0}),
     }
     cruces = [c for c in generar_cruces_algebraicos(variables) if c.operacion == "-"]
     assert len(cruces) == 1, "un solo cruce de resta por par de montos, no dos direcciones"
+
+
+# ---------------------------------------------------------------------------
+# Fase G4: whitelist de denominadores + resta por magnitud
+# ---------------------------------------------------------------------------
+
+def test_no_shows_no_es_denominador_valido_de_un_monto():
+    """No-shows no está en DENOMINADORES_VOLUMEN — 'Monto cobrado por
+    No-shows' no es una métrica real (no_shows nunca es una base de
+    volumen sobre la que dividir un ingreso)."""
+    variables = {
+        "monto_cobrado": _vv(600000, {"2026-01": 600000.0, "2026-02": 650000.0}),
+        "no_shows": _vv(17, {"2026-01": 15.0, "2026-02": 17.0}),
+    }
+    cruces = generar_cruces_algebraicos(variables)
+    assert cruces == [], "no_shows no es un denominador de volumen válido"
+
+
+def test_etapa_del_embudo_si_es_denominador_valido_de_un_monto():
+    """Contraste positivo del anterior: pacientes_atendidos_periodo SÍ
+    está en DENOMINADORES_VOLUMEN, el cruce debe seguir generándose."""
+    variables = {
+        "monto_cobrado": _vv(600000, {"2026-01": 600000.0, "2026-02": 650000.0}),
+        "pacientes_atendidos_periodo": _vv(60, {"2026-01": 60.0, "2026-02": 65.0}),
+    }
+    cruces = generar_cruces_algebraicos(variables)
+    assert any(
+        c.variable_a == "monto_cobrado" and c.variable_b == "pacientes_atendidos_periodo"
+        for c in cruces
+    )
+
+
+def test_resta_de_montos_da_positivo_con_el_mayor_como_minuendo():
+    """monto_facturado (mayor) − monto_cobrado (menor), nunca al revés,
+    sin importar el orden alfabético de los nombres."""
+    variables = {
+        "monto_cobrado": _vv(6180000, {"2026-01": 6000000.0, "2026-02": 6180000.0}),
+        "monto_facturado": _vv(6380000, {"2026-01": 6200000.0, "2026-02": 6380000.0}),
+    }
+    cruces = [c for c in generar_cruces_algebraicos(variables) if c.operacion == "-"]
+    assert len(cruces) == 1
+    c = cruces[0]
+    assert c.variable_a == "monto_facturado" and c.variable_b == "monto_cobrado"
+    assert c.valor > 0, "el mayor como minuendo — nunca debería dar negativo acá"
 
 
 # ---------------------------------------------------------------------------

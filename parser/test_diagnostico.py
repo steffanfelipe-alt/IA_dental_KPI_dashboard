@@ -176,6 +176,43 @@ def test_diagnosticar_sin_kpis_calculados_no_rompe():
     assert diagnosticar({}, {}) == []
 
 
+# ---------------------------------------------------------------------------
+# Fase G6: estacionalidad.py cableado — señal determinista de temporada en
+# vez de depender de que el modelo aplique la regla desde P51 en texto
+# libre. Puramente aditivo: una Hipotesis más, nunca cambia `estado`.
+# ---------------------------------------------------------------------------
+
+def test_con_p51_respondida_y_anomalia_en_temporada_aparece_hipotesis_estacional():
+    kpis_calculados = {4: {"valor": 30.0, "serie": {"2025-12": 20.0, "2026-01": 30.0}}}
+    respuestas = {"P51": "En enero se complica todo por la temporada turística."}
+    d = diagnosticar(kpis_calculados, respuestas)[0]
+    assert any("estacionalidad" in h.causa_probable or "temporada" in h.causa_probable for h in d.hipotesis)
+    assert any(h.preguntas_que_la_sustentan == ["P51"] for h in d.hipotesis)
+
+
+def test_sin_p51_no_aparece_hipotesis_estacional():
+    kpis_calculados = {4: {"valor": 30.0, "serie": {"2025-12": 20.0, "2026-01": 30.0}}}
+    d = diagnosticar(kpis_calculados, {})[0]
+    assert not any("temporada" in h.causa_probable for h in d.hipotesis)
+
+
+def test_fuera_de_temporada_no_aparece_hipotesis_estacional():
+    # Junio no está en MESES_TEMPORADA_ALTA (verano: 01/02/12).
+    kpis_calculados = {4: {"valor": 30.0, "serie": {"2026-05": 20.0, "2026-06": 30.0}}}
+    respuestas = {"P51": "En enero se complica todo por la temporada turística."}
+    d = diagnosticar(kpis_calculados, respuestas)[0]
+    assert not any("temporada" in h.causa_probable for h in d.hipotesis)
+
+
+def test_kpi_fuera_de_la_lista_no_recibe_hipotesis_estacional():
+    # KPI 2 (tiempo de 1ª respuesta) no es 4 ni 12 — aunque haya anomalía
+    # y P51 esté respondida para un mes de temporada, no aplica.
+    kpis_calculados = {2: {"valor": 390.0, "serie": {"2025-12": 300.0, "2026-01": 390.0}}}
+    respuestas = {"P51": "En enero se complica todo por la temporada turística."}
+    d = diagnosticar(kpis_calculados, respuestas)[0]
+    assert not any("temporada" in h.causa_probable for h in d.hipotesis)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

@@ -36,7 +36,14 @@ from dataclasses import dataclass
 from typing import Optional
 
 from catalogo_tecnologico import INTERVENCIONES
-from schema import ETAPAS_EMBUDO, KPI_FORMULAS, METRICAS, OPERACIONES_LEGALES, VARIABLE_TYPES
+from schema import (
+    DENOMINADORES_VOLUMEN,
+    ETAPAS_EMBUDO,
+    KPI_FORMULAS,
+    METRICAS,
+    OPERACIONES_LEGALES,
+    VARIABLE_TYPES,
+)
 
 # Un cruce con un solo período común no muestra tendencia, muestra un punto
 # — no hay "se movió" que reportar con un solo dato.
@@ -207,12 +214,17 @@ def generar_cruces_algebraicos(variables: dict) -> list[Cruce]:
     montos = _candidatas_por_unidad(variables, "monto_ars")
     conteos = _candidatas_por_unidad(variables, "conteo")
     horas = _candidatas_por_unidad(variables, "horas")
+    # Fase G4: monto÷conteo sólo tiene sentido si el conteo es una base de
+    # volumen (turnos, presupuestos, pacientes) — "Monto cobrado por
+    # No-shows" no es una métrica, no_shows nunca es un denominador. Mismo
+    # criterio que ETAPAS_EMBUDO para conteo÷conteo, aplicado acá.
+    conteos_volumen = [c for c in conteos if c in DENOMINADORES_VOLUMEN]
 
     # monto ÷ conteo -> $/unidad (ej. ingreso por paciente atendido)
     if ("monto_ars", "/", "conteo") in _OPERACIONES_ALGEBRA:
         unidad = _OPERACIONES_ALGEBRA[("monto_ars", "/", "conteo")]
         for m in montos:
-            for c in conteos:
+            for c in conteos_volumen:
                 cruce = calcular_cruce(
                     nombre=f"{_nombre_humano(m)} por {_nombre_humano(c)}",
                     var_a=m, operacion="/", var_b=c, unidad=unidad,
@@ -253,15 +265,17 @@ def generar_cruces_algebraicos(variables: dict) -> list[Cruce]:
                     cruces.append(cruce)
 
     # monto ÷ monto -> % (ej. overhead, tasa de cobro); monto − monto -> $
-    # (ej. resultado operativo). Mismo tipo en ambos lados: se recorre en
-    # orden alfabético de nombre de variable para no generar el par
-    # espejado (a÷b y b÷a) como si fueran dos cruces distintos — la
-    # dirección elegida es arbitraria (alfabética), no una afirmación de
-    # cuál variable "debería" ir arriba; el nombre del cruce siempre deja
-    # explícito quién es cada lado.
+    # (ej. resultado operativo). Mismo tipo en ambos lados: se recorre con
+    # `montos[i+1:]` para no generar el par espejado (a÷b y b÷a) como si
+    # fueran dos cruces distintos.
     for i, a in enumerate(montos):
         for b in montos[i + 1:]:
             if ("monto_ars", "/", "monto_ars") in _OPERACIONES_ALGEBRA:
+                # La división no tiene el problema de la resta (nunca da
+                # negativo si divide algo por sí mismo o algo mayor), así
+                # que acá sí queda el orden alfabético — es arbitrario,
+                # pero el nombre del cruce siempre deja explícito quién es
+                # cada lado.
                 unidad = _OPERACIONES_ALGEBRA[("monto_ars", "/", "monto_ars")]
                 cruce = calcular_cruce(
                     nombre=f"{_nombre_humano(a)} / {_nombre_humano(b)}",
@@ -272,12 +286,22 @@ def generar_cruces_algebraicos(variables: dict) -> list[Cruce]:
                 if cruce:
                     cruces.append(cruce)
             if ("monto_ars", "-", "monto_ars") in _OPERACIONES_ALGEBRA:
+                # Fase G4: antes elegía la dirección alfabéticamente, así
+                # que la mitad de las restas terminaban en negativo y se
+                # leían como si algo estuviera mal (ej. "Costo por
+                # hora-sillón − Monto cobrado = $-2.660.000"). Ahora el
+                # monto mayor (por su valor vigente) va como minuendo, para
+                # que el resultado sea positivo cuando tiene sentido serlo.
                 unidad = _OPERACIONES_ALGEBRA[("monto_ars", "-", "monto_ars")]
+                mayor, menor = (a, b) if variables[a].valor >= variables[b].valor else (b, a)
                 cruce = calcular_cruce(
-                    nombre=f"{_nombre_humano(a)} − {_nombre_humano(b)}",
-                    var_a=a, operacion="-", var_b=b, unidad=unidad,
-                    vv_a=variables[a], vv_b=variables[b], origen="algebra",
-                    justificacion=f"'{a}' y '{b}' son ambos montos en ARS — la resta es un monto en ARS.",
+                    nombre=f"{_nombre_humano(mayor)} − {_nombre_humano(menor)}",
+                    var_a=mayor, operacion="-", var_b=menor, unidad=unidad,
+                    vv_a=variables[mayor], vv_b=variables[menor], origen="algebra",
+                    justificacion=(
+                        f"'{mayor}' y '{menor}' son ambos montos en ARS — la resta es un monto en ARS "
+                        f"(el mayor de los dos como minuendo, para que el resultado sea positivo)."
+                    ),
                 )
                 if cruce:
                     cruces.append(cruce)

@@ -48,6 +48,13 @@ from contexto_cualitativo import (  # noqa: F401
     CONTEXTO_GENERAL,
     construir_contexto_cualitativo,
 )
+# Fase I5: explicaciones.py sólo depende de schema.py (sin ciclo posible,
+# a diferencia de diagnostico.py/catalogo_tecnologico.py/priorizacion.py,
+# que este módulo evita importar a propósito — ver docstring de
+# interpretar_clinica). Traduce lo mismo que ya ve un dueño de clínica en
+# las secciones 2c/2d/2e de probar_manual.py, para que el informe hable
+# de esos datos con la misma voz, en vez de con el motivo técnico crudo.
+from explicaciones import explicar_cuarentena, explicar_derivada, explicar_discrepancia
 
 try:
     import anthropic
@@ -56,6 +63,14 @@ except ImportError:  # pragma: no cover
 
 
 MODEL = "claude-sonnet-5"
+# Fase G7: sólo `interpretar_clinica` usa este modelo — es el único de los
+# tres entry points que corre con thinking adaptativo y arma las 10
+# secciones del informe completo, así que es donde el modelo más fuerte
+# se justifica. `interpretar_kpi` e `interpretar_panel` siguen en Sonnet
+# 5 (MODEL de arriba) — son redacción sobre datos ya resueltos por
+# Python, no el razonamiento pesado del informe. Decisión de costo de
+# Felipe, no técnica.
+MODEL_INFORME = "claude-opus-5"
 
 
 def _serializar_diagnostico(diagnostico):
@@ -239,10 +254,13 @@ def interpretar_kpi(
 
     respuesta = client.messages.create(
         model=MODEL,
-        max_tokens=800,
+        # Fase G2: 800 truncaba con datos reales (7 KPIs + contexto
+        # cualitativo cargado) — max_tokens es un techo, no un cargo, así
+        # que dejar margen no cuesta nada.
+        max_tokens=2500,
         # Zoom a UN KPI ya calculado, con su gap y su contexto resueltos por
         # código: es redacción, no razonamiento. Sin esto corre thinking
-        # adaptativo (default del modelo) y se come los 800 tokens.
+        # adaptativo (default del modelo) y se come el presupuesto de tokens.
         thinking={"type": "disabled"},
         system=SYSTEM_PROMPT_BASE,
         messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)}],
@@ -314,10 +332,13 @@ def interpretar_panel(
 
     respuesta = client.messages.create(
         model=MODEL,
-        max_tokens=2000,
+        # Fase G2: 2000 también truncaba con datos reales (7 KPIs a la
+        # vez, cruzándolos entre sí). Mismo criterio que interpretar_kpi:
+        # max_tokens es un techo, no un cargo.
+        max_tokens=12000,
         # Este es el que reventaba con "no tiene ningún bloque de texto":
         # omitir `thinking` corre adaptativo en Sonnet 5, y el thinking se
-        # comía los 2000 tokens enteros. Los cruces entre KPIs que antes
+        # comía los tokens enteros. Los cruces entre KPIs que antes
         # justificaban razonar acá ya los resuelve diagnostico.py de forma
         # determinística y llegan en `payload["diagnostico"]` — este entry
         # point redacta sobre eso, no lo redescubre.
@@ -372,8 +393,22 @@ desde cero:
   contradicciones YA detectadas de forma determinista, y qué información falta.
 - `oportunidades_priorizadas`: intervenciones reales del catálogo de
   Agencia IA, ya ordenadas por score (gap × impacto × confiabilidad ×
-  addressability × suficiencia de datos).
+  addressability × suficiencia de datos) — cada una trae además
+  `beneficio` (qué mejora concretamente), `como_funciona`, y
+  `periodo_evaluacion_semanas` (en cuánto tiempo se espera ver el efecto).
 - `calidad_datos`: completitud/consistencia/confianza del dato de base.
+- `calidad_datos_detalle`: los problemas de dato PUNTUALES, ya en texto
+  llano (no jerga técnica) — variables que quedaron en cuarentena, tasas
+  que la planilla declara y no coinciden con lo calculado, variables que
+  se completaron despejando una tasa (nunca medidas directo), y conflictos
+  entre archivos todavía sin resolver. Esto es lo que alimenta la sección
+  7 de tu informe — sin esto, esa sección no tiene nada concreto que decir.
+  Una entrada de `variables_en_cuarentena` con `"resuelta": true` NO es un
+  problema pendiente — el sistema encontró otra forma de calcularla; no la
+  reportes como algo que falta resolver, y no la confundas con el número
+  agregado de `calidad_datos.datos_en_cuarentena` (que sí la sigue
+  contando aunque esté resuelta — si notás esa diferencia, es normal, no
+  hace falta señalarla como una inconsistencia del sistema).
 
 Reglas:
 
@@ -392,6 +427,9 @@ Reglas:
    leerse con esa salvedad.
 5. Separá SIEMPRE hechos confirmados, causas probables, e hipótesis — no
    los mezcles en la misma oración con el mismo tono de seguridad.
+6. Usá `calidad_datos_detalle` en la sección 7 — nombrá específicamente
+   qué variable está en cuarentena o en conflicto y por qué, no una
+   afirmación genérica tipo "hay algunos datos con problemas".
 
 Estructura tu respuesta en estas 10 secciones, en este orden, texto plano
 en español rioplatense, directo (no JSON):
@@ -407,11 +445,61 @@ en español rioplatense, directo (no JSON):
 7. CONTRADICCIONES Y DATOS FALTANTES — dónde el dato no alcanza o
    contradice lo declarado.
 8. OPORTUNIDADES TECNOLÓGICAS — solo de `oportunidades_priorizadas`, con
-   su tipo (proceso/automatización/IA).
+   su tipo (proceso/automatización/IA). Armá una tabla con columnas
+   Intervención | Qué mejora (`beneficio`) | Cuándo medirlo
+   (`periodo_evaluacion_semanas`) — Felipe la pidió explícitamente para
+   poder mostrarla en el informe, no alcanza con nombrarlas en prosa.
 9. PLAN DE ACCIÓN — qué resolver primero y con qué se mide el éxito.
 10. DETALLE DE KPIs — tabla breve de cada KPI relevante, como capa
     secundaria, no protagonista.
 """
+
+
+def _calidad_datos_detalle(
+    variables_en_cuarentena: dict,
+    discrepancias_reconciliacion: list,
+    variables_derivadas: list,
+    conflictos_pendientes: list,
+) -> dict:
+    """Fase I5: antes el informe sólo veía `calidad_datos` (4 números
+    agregados) — pese a que la sección 7 del prompt le pide hablar de
+    "dónde el dato no alcanza o contradice lo declarado", no tenía ningún
+    dato puntual para nombrar. Se arma con las mismas explicaciones en
+    castellano que ya usa probar_manual.py en las secciones 2c/2d/2e (Fase
+    I2) — mismo texto que ve el dueño de la clínica, no una traducción
+    aparte para el modelo.
+
+    Una cuarentena "reemplazada_por_derivacion" SIGUE contando en
+    `calidad_datos.datos_en_cuarentena` (calidad.py cuenta el dict entero,
+    sin mirar esa marca) — si acá se la excluyera del todo, el modelo ve
+    "1 en cuarentena" en el agregado y una lista vacía en el detalle, sin
+    forma de explicar la diferencia (confirmado con una corrida real:
+    reportó "el detalle llegó vacío, hay que pedirle al equipo que lo
+    identifique" para un caso que en realidad ya estaba resuelto). Se
+    incluye igual, marcada `resuelta: true`, para que el número agregado
+    y el detalle cuenten la misma historia."""
+    return {
+        "variables_en_cuarentena": [
+            {
+                "variable": var, "explicacion": explicar_cuarentena(var, info),
+                "resuelta": bool(info.get("reemplazada_por_derivacion")),
+            }
+            for var, info in (variables_en_cuarentena or {}).items()
+        ],
+        "discrepancias_reconciliacion": [
+            {"kpi_id": d["kpi_id"], "explicacion": explicar_discrepancia(d)}
+            for d in (discrepancias_reconciliacion or [])
+        ],
+        "variables_derivadas": [
+            {"variable": d["variable"], "explicacion": explicar_derivada(d)}
+            for d in (variables_derivadas or [])
+        ],
+        "conflictos_pendientes": [
+            {"variable": c["variable"], "tipo": c.get("tipo"), "pregunta": c["pregunta"]}
+            for c in (conflictos_pendientes or [])
+            if c.get("variable") != "identidad_paciente"  # ese es otro mecanismo (matching.py), no un dato dudoso
+        ],
+    }
 
 
 def _payload_clinica(
@@ -420,6 +508,10 @@ def _payload_clinica(
     calidad_datos,
     respuestas_diagnostico: dict[str, str],
     studio_nombre: Optional[str],
+    variables_en_cuarentena: Optional[dict] = None,
+    discrepancias_reconciliacion: Optional[list] = None,
+    variables_derivadas: Optional[list] = None,
+    conflictos_pendientes: Optional[list] = None,
 ) -> dict:
     diagnosticos_payload = []
     for d in diagnosticos:
@@ -451,6 +543,11 @@ def _payload_clinica(
                 "metrica_objetivo": intervencion.metrica_objetivo,
                 "condicion": intervencion.condicion,
                 "requiere_compliance": intervencion.requiere_compliance,
+                # Fase I4/I5: sin esto el modelo no puede armar la tabla
+                # de "qué mejora / cuándo medirlo" que pide la sección 8.
+                "beneficio": intervencion.beneficio,
+                "como_funciona": intervencion.como_funciona,
+                "periodo_evaluacion_semanas": intervencion.periodo_evaluacion_semanas,
             },
         })
 
@@ -460,6 +557,10 @@ def _payload_clinica(
         "diagnosticos": diagnosticos_payload,
         "oportunidades_priorizadas": oportunidades_payload,
         "calidad_datos": dataclasses.asdict(calidad_datos) if calidad_datos is not None else None,
+        "calidad_datos_detalle": _calidad_datos_detalle(
+            variables_en_cuarentena, discrepancias_reconciliacion,
+            variables_derivadas, conflictos_pendientes,
+        ),
     }
 
 
@@ -469,6 +570,10 @@ def interpretar_clinica(
     calidad_datos=None,
     respuestas_diagnostico: Optional[dict[str, str]] = None,
     studio_nombre: Optional[str] = None,
+    variables_en_cuarentena: Optional[dict] = None,
+    discrepancias_reconciliacion: Optional[list] = None,
+    variables_derivadas: Optional[list] = None,
+    conflictos_pendientes: Optional[list] = None,
     client=None,
 ) -> dict:
     """
@@ -482,6 +587,13 @@ def interpretar_clinica(
     `priorizacion.OportunidadPriorizada` (ver `priorizacion.priorizar_oportunidades`).
     `calidad_datos`: `calidad.ReporteCalidad` opcional (ver `calidad.evaluar_calidad`).
 
+    Fase I5: `variables_en_cuarentena`, `discrepancias_reconciliacion`,
+    `variables_derivadas` y `conflictos_pendientes` son las mismas claves
+    del payload de `pipeline.procesar_migracion` (`resultado["..."]`) —
+    opcionales y con default `None`/vacío a propósito, así un llamador que
+    todavía no los pasa (código viejo) sigue funcionando exactamente
+    igual, sólo que sin la sección 7 poblada con casos concretos.
+
     Ambos parámetros llegan ya calculados — este módulo no importa
     diagnostico.py/catalogo_tecnologico.py/priorizacion.py para no crear
     una cadena de imports más larga de la que ya rompió el ciclo original
@@ -490,6 +602,10 @@ def interpretar_clinica(
     """
     payload = _payload_clinica(
         diagnosticos, oportunidades_priorizadas, calidad_datos, respuestas_diagnostico or {}, studio_nombre,
+        variables_en_cuarentena=variables_en_cuarentena,
+        discrepancias_reconciliacion=discrepancias_reconciliacion,
+        variables_derivadas=variables_derivadas,
+        conflictos_pendientes=conflictos_pendientes,
     )
 
     if client is None:
@@ -503,7 +619,7 @@ def interpretar_clinica(
     # dos juntos), y en streaming, que es lo que evita el timeout HTTP del
     # SDK con max_tokens alto.
     with client.messages.stream(
-        model=MODEL,
+        model=MODEL_INFORME,
         max_tokens=16000,
         thinking={"type": "adaptive"},
         system=SYSTEM_PROMPT_CLINICA,

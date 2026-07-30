@@ -66,6 +66,52 @@ def test_sin_registros_da_ledger_vacio():
     assert registro.clientes == {}
 
 
+# ---------------------------------------------------------------------------
+# Fase H4a: campo_es_id_estable — evita el matching difuso cuando la columna
+# de paciente ya es un identificador canónico, no un nombre tipeado a mano.
+# ---------------------------------------------------------------------------
+
+def test_ids_estables_no_se_fusionan_por_matching_difuso():
+    """El caso real del bug: "Paciente 1"/"Paciente 2"/"Paciente 3" pasan
+    el umbral de fusión automática de matching.py (comparten el primer
+    token + similitud > 0.80) y HOY se fusionan en un solo cliente. Con
+    campo_es_id_estable=True eso no puede pasar — cada valor de columna
+    es su propio cliente_id, sin pasar por matching.py."""
+    registros = [
+        {"paciente": "Paciente 1", "fecha": "2026-01", "tipo_evento": "pago", "monto": 100},
+        {"paciente": "Paciente 2", "fecha": "2026-01", "tipo_evento": "pago", "monto": 200},
+        {"paciente": "Paciente 3", "fecha": "2026-01", "tipo_evento": "pago", "monto": 300},
+    ]
+    ledger, _ = construir_ledger_pacientes(registros, campo_es_id_estable=True)
+    assert len(ledger) == 3, f"esperaba 3 pacientes distintos, dio {len(ledger)}"
+
+
+def test_mismo_id_estable_en_dos_filas_agrupa_igual():
+    """Sin fusión difusa de por medio, dos filas con el MISMO id literal
+    siguen agrupando en el mismo paciente — no es que se vuelvan todas
+    distintas, es que dejan de fusionarse cuando NO deberían."""
+    registros = [
+        {"paciente": "P1045", "fecha": "2026-01", "tipo_evento": "pago", "monto": 100},
+        {"paciente": "P1045", "fecha": "2026-02", "tipo_evento": "pago", "monto": 200},
+        {"paciente": "P1011", "fecha": "2026-01", "tipo_evento": "pago", "monto": 999},
+    ]
+    ledger, _ = construir_ledger_pacientes(registros, campo_es_id_estable=True)
+    assert len(ledger) == 2
+    assert sum(e["monto"] for e in ledger["P1045"]) == 300
+
+
+def test_sin_id_estable_los_nombres_reales_se_siguen_fusionando_igual():
+    """No-regresión: el default (False) no cambia el camino de nombres
+    reales — "Juan Perez"/"J. Perez" se siguen fusionando vía
+    matching.py, exactamente como antes de esta fase."""
+    registros = [
+        {"paciente": "Juan Perez", "fecha": "2026-01", "tipo_evento": "pago", "monto": 50000},
+        {"paciente": "J. Perez", "fecha": "2026-02", "tipo_evento": "pago", "monto": 30000},
+    ]
+    ledger, _ = construir_ledger_pacientes(registros)  # campo_es_id_estable default False
+    assert len(ledger) == 1
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

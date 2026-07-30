@@ -29,12 +29,20 @@ except ImportError:  # pragma: no cover
 
 MODEL = "claude-sonnet-5"
 
+# Mismo criterio que excel_parser.VARIABLES_EXCEL: "list" y "ledger" no son
+# variables que una foto pueda mapear con una sola celda (un ledger es
+# {paciente_id: [eventos]}, no un número) — sin este filtro el modelo ve
+# "ledger_pacientes" en el vocabulario y le asigna un escalar (confirmado
+# en la corrida real de H3: mapeó 1240 ahí), que después queda en
+# cuarentena por validacion.py. Mejor no ofrecerlo.
+_VARIABLES_FOTO = [v for v in VARIABLE_TYPES if VARIABLE_TYPES[v] not in ("list", "ledger")]
+
 SYSTEM_PROMPT = f"""Sos un lector de planillas de clínicas dentales argentinas,
 manuscritas o impresas. Te paso una imagen (foto de cuaderno, planilla
 impresa, o captura de pantalla de otro sistema). Extraé todos los datos que
 puedas y mapealos a estas variables:
 
-{json.dumps(list(VARIABLE_TYPES.keys()), ensure_ascii=False, indent=2)}
+{json.dumps(_VARIABLES_FOTO, ensure_ascii=False, indent=2)}
 
 Aclaración sobre una variable fácil de confundir:
 - "tiempo_respuesta_promedio_min" es cuánto tarda LA CLÍNICA en responder
@@ -84,6 +92,7 @@ def parsear_imagen(path: str, client: Optional["anthropic.Anthropic"] = None) ->
     respuesta = client.messages.create(
         model=MODEL,
         max_tokens=2000,
+        thinking={"type": "disabled"},
         system=SYSTEM_PROMPT,
         messages=[{
             "role": "user",
@@ -103,11 +112,21 @@ def parsear_imagen(path: str, client: Optional["anthropic.Anthropic"] = None) ->
 
     variables: dict[str, VariableValue] = {}
     for item in payload.get("variables_encontradas", []):
-        var = item["variable"]
+        # Un item mal formado (falta "variable" o "valor") no puede tirar
+        # abajo el resto del lote — una foto manuscrita es la entrada con
+        # más chances de que el modelo devuelva algo incompleto en una
+        # sola fila (mismo principio que cruces_propuestos.py).
+        try:
+            var = item["variable"]
+            valor = item["valor"]
+        except (KeyError, TypeError):
+            continue
         if var not in VARIABLE_TYPES:
             continue  # Claude no debería inventar, pero por las dudas se descarta
+        if VARIABLE_TYPES[var] in ("list", "ledger"):
+            continue  # no están en el vocabulario del prompt, pero por las dudas
         variables[var] = VariableValue(
-            valor=item["valor"],
+            valor=valor,
             fuente="migracion_foto",
             confianza=item.get("confianza", 0.6),
         )
@@ -130,6 +149,7 @@ def parsear_pdf(path: str, client: Optional["anthropic.Anthropic"] = None) -> di
     respuesta = client.messages.create(
         model=MODEL,
         max_tokens=2000,
+        thinking={"type": "disabled"},
         system=SYSTEM_PROMPT,
         messages=[{
             "role": "user",
@@ -149,11 +169,15 @@ def parsear_pdf(path: str, client: Optional["anthropic.Anthropic"] = None) -> di
 
     variables: dict[str, VariableValue] = {}
     for item in payload.get("variables_encontradas", []):
-        var = item["variable"]
+        try:
+            var = item["variable"]
+            valor = item["valor"]
+        except (KeyError, TypeError):
+            continue
         if var not in VARIABLE_TYPES:
             continue
         variables[var] = VariableValue(
-            valor=item["valor"],
+            valor=valor,
             fuente="migracion_foto",
             confianza=item.get("confianza", 0.6),
         )

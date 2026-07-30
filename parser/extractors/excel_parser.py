@@ -54,6 +54,7 @@ from coverage import VariableValue
 from claude_utils import extraer_texto
 from trazabilidad import Trazabilidad
 from matching import RegistroClientes, encontrar_o_crear_cliente
+from ledger import TIPOS_EVENTO, construir_ledger_pacientes
 import periodos
 
 try:
@@ -83,13 +84,14 @@ class TasaDeclarada:
 # como "4" terminaba guardado donde se esperaba una lista de tareas). Esas
 # variables se piden en el wizard, no se extraen de Excel.
 #
-# Tampoco "ledger" (Fase 2, ledger_pacientes): a diferencia de las demás
-# variables, que mapean UNA columna a UNA variable, un ledger necesita
-# varias columnas a la vez (nombre + fecha + monto + tratamiento) resueltas
-# contra matching.py — no encaja en el contrato de mapeo columna-por-
-# columna de este módulo. Se arma con una función aparte (ver
-# `construir_ledger_pacientes` en ledger.py) a partir de filas ya extraídas,
-# no a través del prompt de mapeo semántico de acá.
+# Tampoco "ledger" (ledger_pacientes) por MAPEO columna-a-columna: a
+# diferencia de las demás variables, un ledger necesita varias columnas a
+# la vez (nombre + fecha + tipo + monto + tratamiento) resueltas contra
+# matching.py — no encaja en "una columna, una variable, un valor". Fase
+# H4b: el modelo SÍ lo declara a través del prompt, pero en un bloque
+# aparte ("ledger", ver más abajo), no como una entrada más de "mapeo";
+# `construir_ledger_pacientes` en ledger.py sigue siendo quien arma el
+# resultado final a partir de los registros ya planos.
 VARIABLES_EXCEL = {v: info for v, info in METRICAS_EXTRAIBLES.items() if VARIABLE_TYPES.get(v) not in ("list", "ledger")}
 VARIABLES_DICT = sorted(v for v in VARIABLES_EXCEL if VARIABLE_TYPES.get(v) == "dict")
 
@@ -121,6 +123,10 @@ _VARIABLES_JSON = json.dumps(
      for v, info in VARIABLES_EXCEL.items()},
     ensure_ascii=False, indent=2,
 )
+
+# Fase H4b: vocabulario de tipo_evento para el bloque "ledger" de una hoja
+# transaccional — se le pasa al modelo desde acá, sin duplicarlo.
+_TIPOS_EVENTO_JSON = json.dumps(sorted(TIPOS_EVENTO), ensure_ascii=False)
 
 SYSTEM_PROMPT = f"""Sos un normalizador de datos para clínicas dentales argentinas.
 Te paso, por cada hoja de un Excel (o la única hoja implícita de un CSV),
@@ -171,10 +177,64 @@ Tu trabajo, por cada hoja:
 
    Si "orientacion" es "transaccional" y la hoja trae una columna de FECHA
    por registro (no una etiqueta de mes, una fecha real de cada fila),
-   indicá esa columna también en "columna_periodo" — el código arma con
-   eso una serie histórica agrupando los registros por mes, igual que en
-   periodos_en_filas. Es opcional: si no hay columna de fecha clara, no
-   la indiques y el sistema solo agrega el total.
+   **es OBLIGATORIO indicar esa columna en "columna_periodo"** — no es
+   opcional cuando existe. El código arma con eso una serie histórica
+   agrupando los registros por mes, igual que en periodos_en_filas.
+
+   La consecuencia de omitirla cuando la columna existe: sin
+   "columna_periodo", el código suma o agrega TODAS las filas de TODOS
+   los meses juntas en un solo número — un archivo con 26 meses de
+   historial termina reportado como si fuera el valor de un único
+   período, que no corresponde a nada real y después no coincide con lo
+   que declara otro archivo del mismo mes (genera un conflicto que en
+   realidad no es tal, sólo falta la fecha). Ejemplo: una hoja de cobros
+   con columna "fecha_hora" (formato "2024-08-03 09:30:00" o similar) —
+   ESO es una columna de fecha por registro, declarala en
+   "columna_periodo" aunque incluya hora además de la fecha.
+
+   Sólo se omite "columna_periodo" cuando la hoja genuinamente NO tiene
+   ninguna columna de fecha por fila (ej. un export sin timestamp) — ahí
+   sí el sistema agrega el total, porque no hay otra opción.
+
+   Además, revisá las filas ANTES del encabezado (título, subtítulo, notas
+   sueltas) buscando una advertencia de que los números de ESA HOJA son
+   estimados, se anotan a mano, o no salen de un sistema — por ejemplo
+   "Estos numeros los estimo la recepcionista, no hay sistema". Si
+   encontrás una nota así, marcá "hoja_estimada": true para toda la hoja
+   (no por celda ni por variable — es una propiedad de la hoja entera).
+   No confundas con un simple título de sección: tiene que haber una
+   afirmación sobre CÓMO se produjo el dato, no sólo el nombre de la hoja.
+
+   Si "orientacion" es "transaccional" y cada fila representa algo que le
+   pasó a un paciente puntual (un turno, un cobro, un presupuesto, un
+   tratamiento), además del "mapeo" normal (o incluso SIN mapeo si ninguna
+   columna es un total agregable) declará un bloque "ledger" con esta
+   forma:
+
+   {{"columna_paciente_index": 1, "id_estable": true,
+     "columna_fecha_index": 2,
+     "eventos": [
+       {{"tipo_evento": "pago", "columna_monto_index": 3,
+         "columna_tratamiento_index": 5, "confianza": 0.8}}
+     ]}}
+
+   - "columna_paciente_index": la columna que identifica al paciente en
+     CADA fila. "id_estable": true si es un código ya único (ej. "P1045"),
+     false si es un nombre tipeado a mano (el código junta identidades
+     parecidas con más cuidado en ese caso).
+   - "columna_fecha_index": la fecha de cada registro (no una etiqueta de
+     mes — la fecha real del evento).
+   - "eventos": una fila de la hoja puede generar MÁS DE UN evento — por
+     ejemplo, un presupuesto con estado "aceptado" es a la vez un
+     "presupuesto_emitido" (siempre) Y un "presupuesto_aceptado" (solo esa
+     fila). Para eso, cada entrada de "eventos" puede traer su propia
+     "condicion" (misma sintaxis que en "mapeo": nombre real de columna,
+     con backticks si tiene espacios) — sin "condicion", el evento se
+     genera para TODAS las filas de la hoja. "tipo_evento" tiene que ser
+     uno de: {_TIPOS_EVENTO_JSON}. "columna_monto_index" y
+     "columna_tratamiento_index" son opcionales.
+   - Si la hoja no tiene identidad de paciente por fila, no declares
+     "ledger" — no inventes una columna que no está.
 
 4. Mapear cada variable a UNA columna (para periodos_en_filas y
    transaccional) o a UNA fila+columna (para metricas_en_filas), del
@@ -232,6 +292,21 @@ Reglas generales:
   de filas con estado ausente) — indicalo como dos reglas, con "condicion"
   referenciando el nombre real de columna (el texto de la fila de
   encabezado, no el índice).
+- Lo mismo aplica a montos: si una hoja transaccional trae presupuestos con
+  una columna de estado ("aceptado"/"pendiente"/"rechazado"), la suma total
+  de la columna de monto NO es lo mismo que la suma de los aceptados —
+  son dos variables distintas ("monto_presupuestos_emitidos" vs.
+  "monto_presupuestos_aceptados"). Para la segunda, sumá SOLO las filas con
+  el estado correspondiente usando "condicion" con "agregacion": "sum", por
+  ejemplo {{"variable": "monto_presupuestos_aceptados", "agregacion": "sum",
+  "condicion": "estado == 'aceptado'"}}. Nunca reportes el total sin
+  filtrar como si fuera el aceptado.
+- La "condicion" tiene que ser una expresión de pandas.query() válida sobre
+  el nombre REAL de columna (el texto de la fila de encabezado, no el
+  índice): si ese nombre tiene espacios o puntos (ej. "Estado turno",
+  "Presup. entregados"), envolvelo en backticks — `Estado turno` ==
+  'aceptado' — si no, la condición no se puede evaluar y la regla entera
+  se descarta.
 - Si una columna es ambigua entre dos variables, elegí la más probable
   según el contexto de las otras columnas y bajá la confianza a 0.5 o menos.
 - Nunca inventes una variable que no está en la lista de arriba.
@@ -245,6 +320,7 @@ Reglas generales:
       "orientacion": "periodos_en_filas | metricas_en_filas | transaccional",
       "columna_periodo": "opcional, solo si orientacion es periodos_en_filas",
       "filas_excluidas": [8],
+      "hoja_estimada": "opcional (default false), true solo si hay una nota explícita",
       "mapeo": [
         {{"columna_index": 1, "fila_index": null, "variable": "...",
           "agregacion": "sum|count|count_where|avg",
@@ -252,6 +328,7 @@ Reglas generales:
           "columna_categoria_index": "opcional, solo para variables tipo dict",
           "unidad_origen": "...", "confianza": 0.0-1.0}}
       ],
+      "ledger": "opcional, solo si orientacion es transaccional y hay identidad de paciente por fila — ver más arriba",
       "tasas_declaradas": [
         {{"kpi_id": 4, "columna_index": 8, "unidad_origen": "fraccion|porcentaje"}}
       ],
@@ -734,6 +811,11 @@ def aplicar_mapeo(
     hoja = mapeo_hoja.get("hoja")
     fuente = f"migracion_excel:{hoja}" if hoja else "migracion_excel"
     orientacion = mapeo_hoja.get("orientacion", "periodos_en_filas")
+    # Fase H5: una hoja con una nota de "esto lo estima la recepcionista, no
+    # hay sistema" pasa metodo="estimado" a TODAS sus variables — es una
+    # propiedad de la hoja entera, no de una celda puntual, así que se
+    # resuelve una sola vez acá (mismo lugar que fuente/orientacion).
+    metodo = "estimado" if mapeo_hoja.get("hoja_estimada") else None
     df_base, col_periodo, fila_encabezado = _df_base_y_periodo(df, mapeo_hoja)
 
     for regla in mapeo_hoja["mapeo"]:
@@ -772,7 +854,14 @@ def aplicar_mapeo(
                 try:
                     df_filtrado = df_filtrado.query(regla["condicion"])
                 except Exception:
-                    pass  # condición no aplicable con pandas.query, se ignora esa regla puntual
+                    # Fase H6: si pandas no puede parsear la condición, la
+                    # regla se descarta (la variable queda faltante y el
+                    # wizard la pregunta) — antes acá había un `pass` que
+                    # dejaba df_filtrado SIN FILTRAR y la regla se ejecutaba
+                    # igual sobre todas las filas: con agregacion="sum" eso
+                    # sumaba el total en vez de sólo las filas que cumplían
+                    # la condición, un número mal en vez de un dato ausente.
+                    continue
             agregacion = regla.get("agregacion", "sum")
             serie = None
             etiquetas_originales = None
@@ -848,12 +937,76 @@ def aplicar_mapeo(
             etiquetas_originales=etiquetas_originales,
             periodos_no_reconocidos=no_reconocidos or None,
             trazabilidad=traza,
+            metodo=metodo,
         )
         existente = variables.get(var)
         if existente is None or nueva.confianza > existente.confianza:
             variables[var] = nueva
 
     return variables
+
+
+def _armar_registros_ledger(df_base: pd.DataFrame, ledger_bloque: dict) -> list[dict]:
+    """Fase H4b: convierte el bloque "ledger" del mapeo (columnas +
+    eventos declarados por el modelo) en la lista plana de registros que
+    ledger.construir_ledger_pacientes espera. Una fila puede producir más
+    de un evento (ej. un presupuesto aceptado es "emitido" Y "aceptado"),
+    por eso se itera "eventos" por fuera y las filas por dentro, no al
+    revés."""
+    idx_paciente = _a_entero(ledger_bloque.get("columna_paciente_index"))
+    idx_fecha = _a_entero(ledger_bloque.get("columna_fecha_index"))
+    if idx_paciente is None or idx_fecha is None:
+        return []
+    if idx_paciente >= len(df_base.columns) or idx_fecha >= len(df_base.columns):
+        return []
+    col_paciente = df_base.columns[idx_paciente]
+    col_fecha = df_base.columns[idx_fecha]
+
+    registros: list[dict] = []
+    for evento in ledger_bloque.get("eventos") or []:
+        tipo = evento.get("tipo_evento")
+        if not tipo:
+            continue
+        df_evento = df_base
+        if evento.get("condicion"):
+            try:
+                df_evento = df_evento.query(evento["condicion"])
+            except Exception:
+                # Misma decisión que H6 en aplicar_mapeo: una condición que
+                # pandas no puede parsear descarta ESTE evento puntual, no
+                # se genera para todas las filas sin filtrar.
+                continue
+
+        idx_monto = _a_entero(evento.get("columna_monto_index"))
+        idx_tratamiento = _a_entero(evento.get("columna_tratamiento_index"))
+        col_monto = df_base.columns[idx_monto] if idx_monto is not None and idx_monto < len(df_base.columns) else None
+        col_tratamiento = (
+            df_base.columns[idx_tratamiento]
+            if idx_tratamiento is not None and idx_tratamiento < len(df_base.columns) else None
+        )
+
+        for _, fila in df_evento.iterrows():
+            registro = {"paciente": fila[col_paciente], "fecha": fila[col_fecha], "tipo_evento": tipo}
+            if col_monto is not None:
+                registro["monto"] = fila[col_monto]
+            if col_tratamiento is not None:
+                registro["tratamiento"] = fila[col_tratamiento]
+            registros.append(registro)
+
+    return registros
+
+
+def _fusionar_ledger(existente: Optional[dict], nuevo: dict) -> dict:
+    """Varias hojas del mismo archivo pueden aportar ledger (ej. una hoja
+    de turnos y otra de cobros) — se fusiona por paciente en vez de que la
+    última pisara a la anterior, como pasaría con el criterio de "gana la
+    mayor confianza" que usa el resto de las variables."""
+    fusionado: dict[str, list[dict]] = {pid: list(eventos) for pid, eventos in (existente or {}).items()}
+    for pid, eventos in nuevo.items():
+        fusionado.setdefault(pid, []).extend(eventos)
+    for pid in fusionado:
+        fusionado[pid] = sorted(fusionado[pid], key=lambda e: e["periodo"])
+    return fusionado
 
 
 def parsear_excel(
@@ -878,13 +1031,43 @@ def parsear_excel(
     variables: dict[str, VariableValue] = {}
     tasas_declaradas: dict[int, TasaDeclarada] = {}
     for mapeo_hoja in respuesta["hojas"]:
-        if mapeo_hoja.get("fila_encabezado") is None or not mapeo_hoja.get("mapeo"):
+        # Fase H4b: una hoja transaccional puede venir SOLO con "ledger" y
+        # "mapeo" vacío (ninguna columna es un total agregable, todo el
+        # valor está en el historial por paciente) — el `not mapeo` de
+        # antes la hubiera saltado entera.
+        if mapeo_hoja.get("fila_encabezado") is None or (not mapeo_hoja.get("mapeo") and not mapeo_hoja.get("ledger")):
             continue
         df = _releer_con_encabezado(path, mapeo_hoja.get("hoja"), mapeo_hoja["fila_encabezado"])
         formatos = formatos_por_hoja.get(mapeo_hoja.get("hoja")) or {}
-        variables = aplicar_mapeo(df, mapeo_hoja, variables, formatos_columna=formatos, registro_clientes=registro_clientes)
+        if mapeo_hoja.get("mapeo"):
+            variables = aplicar_mapeo(df, mapeo_hoja, variables, formatos_columna=formatos, registro_clientes=registro_clientes)
         # Las tasas declaradas NO pasan por la guarda de formato: ahí un
         # formato % es justamente lo correcto y esperado.
         tasas_declaradas.update(extraer_tasas_declaradas(df, mapeo_hoja))
+
+        ledger_bloque = mapeo_hoja.get("ledger")
+        if ledger_bloque:
+            df_base, _, _ = _df_base_y_periodo(df, mapeo_hoja)
+            registros = _armar_registros_ledger(df_base, ledger_bloque)
+            if registros:
+                nuevo_ledger, _ = construir_ledger_pacientes(
+                    registros, registro_clientes=registro_clientes,
+                    campo_es_id_estable=bool(ledger_bloque.get("id_estable")),
+                )
+                # confianza es por evento (puede haber varios tipos en un
+                # mismo bloque, ej. presupuesto_emitido + aceptado) — se
+                # propaga la más baja, mismo criterio que min(confianza)
+                # en cruces.py.
+                confianza_nueva = min(
+                    (e.get("confianza", 0.8) for e in ledger_bloque.get("eventos") or []),
+                    default=0.8,
+                )
+                existente = variables.get("ledger_pacientes")
+                hoja = mapeo_hoja.get("hoja")
+                variables["ledger_pacientes"] = VariableValue(
+                    valor=_fusionar_ledger(existente.valor if existente else None, nuevo_ledger),
+                    fuente=f"migracion_excel:{hoja}" if hoja else "migracion_excel",
+                    confianza=min(confianza_nueva, existente.confianza) if existente else confianza_nueva,
+                )
 
     return variables, tasas_declaradas

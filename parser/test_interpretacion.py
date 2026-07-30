@@ -151,6 +151,93 @@ def test_interpretar_clinica_vacio_no_rompe():
 
 
 # ---------------------------------------------------------------------------
+# Fase I5: el informe pasó de ver sólo calidad_datos (4 números agregados)
+# a ver también los casos puntuales — cuarentena, discrepancias, derivadas
+# y conflictos — ya traducidos por explicaciones.py.
+# ---------------------------------------------------------------------------
+
+def test_interpretar_clinica_sin_los_parametros_nuevos_da_detalle_vacio():
+    """Retrocompatibilidad: un llamador viejo (sin pasar los 4 params
+    nuevos) sigue funcionando — calidad_datos_detalle sale con listas
+    vacías, no rompe ni falta la clave."""
+    resultado = interpretar_clinica([], [])
+    detalle = resultado["payload_enviado_al_asistente"]["calidad_datos_detalle"]
+    assert detalle == {
+        "variables_en_cuarentena": [], "discrepancias_reconciliacion": [],
+        "variables_derivadas": [], "conflictos_pendientes": [],
+    }
+
+
+def test_interpretar_clinica_humaniza_la_cuarentena():
+    resultado = interpretar_clinica(
+        [], [],
+        variables_en_cuarentena={
+            "no_shows": {"valor": "cuarenta", "fuente": "migracion_excel", "motivo": "se esperaba número, llegó str"},
+        },
+    )
+    detalle = resultado["payload_enviado_al_asistente"]["calidad_datos_detalle"]
+    assert len(detalle["variables_en_cuarentena"]) == 1
+    assert "tiene que ser un número" in detalle["variables_en_cuarentena"][0]["explicacion"]
+
+
+def test_interpretar_clinica_marca_cuarentena_ya_resuelta_en_vez_de_ocultarla():
+    """No excluirla del todo: si el agregado calidad_datos.datos_en_cuarentena
+    la sigue contando (calidad.py no mira reemplazada_por_derivacion) y acá
+    se la sacara entera, el modelo ve "1 en cuarentena" en el agregado y
+    una lista vacía en el detalle, sin poder explicar la diferencia — pasó
+    en una corrida real antes de este fix."""
+    resultado = interpretar_clinica(
+        [], [],
+        variables_en_cuarentena={
+            "no_shows": {
+                "valor": "x", "fuente": "y", "motivo": "algo — reemplazada por un valor derivado de la tasa",
+                "reemplazada_por_derivacion": True,
+            },
+        },
+    )
+    detalle = resultado["payload_enviado_al_asistente"]["calidad_datos_detalle"]
+    assert len(detalle["variables_en_cuarentena"]) == 1
+    assert detalle["variables_en_cuarentena"][0]["resuelta"] is True
+
+
+def test_interpretar_clinica_cuarentena_sin_resolver_marca_resuelta_false():
+    resultado = interpretar_clinica(
+        [], [],
+        variables_en_cuarentena={
+            "no_shows": {"valor": "cuarenta", "fuente": "migracion_excel", "motivo": "se esperaba número, llegó str"},
+        },
+    )
+    detalle = resultado["payload_enviado_al_asistente"]["calidad_datos_detalle"]
+    assert detalle["variables_en_cuarentena"][0]["resuelta"] is False
+
+
+def test_interpretar_clinica_conflictos_excluye_identidad_paciente():
+    resultado = interpretar_clinica(
+        [], [],
+        conflictos_pendientes=[
+            {"variable": "no_shows", "tipo": "valores_distintos", "pregunta": "¿Cuál es correcto?"},
+            {"variable": "identidad_paciente", "pregunta": "¿Es la misma persona?"},
+        ],
+    )
+    detalle = resultado["payload_enviado_al_asistente"]["calidad_datos_detalle"]
+    assert len(detalle["conflictos_pendientes"]) == 1
+    assert detalle["conflictos_pendientes"][0]["variable"] == "no_shows"
+
+
+def test_interpretar_clinica_oportunidad_incluye_beneficio_y_plazo():
+    kpis_calculados = {4: {"valor": 40.0, "serie": None}}
+    diagnosticos = diagnosticar(kpis_calculados, {})
+    oportunidades = mapear_oportunidades(diagnosticos)
+    priorizadas = priorizar_oportunidades(oportunidades, impacto_por_kpi={4: 1.0})
+
+    resultado = interpretar_clinica(diagnosticos, priorizadas)
+    primera = resultado["payload_enviado_al_asistente"]["oportunidades_priorizadas"][0]
+    assert "beneficio" in primera["intervencion"]
+    assert "periodo_evaluacion_semanas" in primera["intervencion"]
+    assert primera["intervencion"]["beneficio"]  # no vacío para ninguna de las 35
+
+
+# ---------------------------------------------------------------------------
 # Truncamiento: el modo de falla silencioso (informe cortado que se ve
 # completo) es peor que el ruidoso. Bug real — las tres llamadas omitían
 # `thinking`, que en los modelos actuales significa adaptativo, no "sin

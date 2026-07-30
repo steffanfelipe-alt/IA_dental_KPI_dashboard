@@ -38,7 +38,15 @@ from typing import Callable, Optional
 from benchmarks import Gap, calcular_gap
 from calidad import suficiencia_datos
 from contexto_cualitativo import construir_contexto_cualitativo
+from estacionalidad import mes_en_temporada_declarada
 from schema import KPI_BY_ID
+
+# Fase G6 (excepción marcada — ver plan): los dos KPIs que el docstring de
+# estacionalidad.py nombra explícitamente como afectados por la
+# estacionalidad turística de Mar del Plata — no-show (la agenda se
+# desordena antes del pico) y producción por hora-sillón (menos gente
+# atendida en temporada baja).
+KPIS_CON_ESTACIONALIDAD = {4, 12}
 
 
 class EstadoEvidencia(str, Enum):
@@ -284,6 +292,27 @@ def diagnosticar(
                     l.split(":")[0].strip("- ") for l in contexto.splitlines() if l.startswith("-")
                 ],
             ))
+
+        # Fase G6 (excepción marcada): señal determinista de estacionalidad
+        # en vez de depender de que el modelo se acuerde de aplicar la
+        # regla 5 de interpretacion.SYSTEM_PROMPT_BASE a partir de una
+        # respuesta de texto libre (P51). Puramente aditivo — una
+        # hipótesis más, nunca cambia `estado` ni ningún otro campo.
+        if anomalias and kpi_id in KPIS_CON_ESTACIONALIDAD:
+            serie_kpi = info.get("serie")
+            periodo_vigente = list(serie_kpi)[-1] if serie_kpi else None
+            # None si P51 no está respondida (mes_en_temporada_declarada
+            # ya maneja eso) — en ausencia de dato no se asume nada.
+            if periodo_vigente and mes_en_temporada_declarada(periodo_vigente, respuestas_diagnostico):
+                hipotesis.append(Hipotesis(
+                    kpi_id=kpi_id,
+                    causa_probable=(
+                        f"el período vigente ({periodo_vigente}) cae en la época que la clínica "
+                        "declaró como complicada (P51) — puede ser estacionalidad, no un problema estructural"
+                    ),
+                    confianza="media",
+                    preguntas_que_la_sustentan=["P51"],
+                ))
 
         diagnosticos.append(Diagnostico(
             kpi_id=kpi_id,

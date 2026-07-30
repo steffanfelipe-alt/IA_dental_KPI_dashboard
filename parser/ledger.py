@@ -59,6 +59,7 @@ def construir_ledger_pacientes(
     campo_monto: str = "monto",
     campo_tratamiento: str = "tratamiento",
     registro_clientes: Optional[RegistroClientes] = None,
+    campo_es_id_estable: bool = False,
 ) -> tuple[dict[str, list[dict]], RegistroClientes]:
     """Cada `registro` es un dict con al menos nombre y fecha. Un registro
     sin nombre o con fecha irreconocible se descarta del ledger — no hay
@@ -69,7 +70,21 @@ def construir_ledger_pacientes(
     Devuelve (ledger, registro_clientes) — pasar el mismo
     `registro_clientes` a través de todos los archivos de una migración,
     igual que hace `pipeline.procesar_migracion` con `aplicar_mapeo`.
-    """
+
+    Fase H4a: `campo_es_id_estable=True` cuando la columna de paciente ya
+    es un identificador canónico (ej. "P1045" de un sistema de gestión),
+    no un nombre tipeado a mano. `matching.py` existe para el problema de
+    "Juan Pérez" vs "J. Perez" — nombres reales, con variación de tipeo.
+    Un ID ya es estable por construcción; pasarlo igual por matching
+    difuso es activamente peligroso: se probó que identificadores como
+    "Paciente 1"/"Paciente 2"/"Paciente 3" superan el umbral de fusión
+    automática (comparten el primer token "PACIENTE" + similitud > 0.80)
+    y el sistema los fusiona EN SILENCIO en un solo cliente — exactamente
+    lo que `matching.py` promete no hacer nunca. Acá se evita el problema
+    entero: con un ID estable no se llama a `matching.py` en absoluto, se
+    usa el valor (normalizado) directo como `cliente_id`. Con el default
+    `False`, el comportamiento es exactamente el de siempre — el camino
+    de nombres reales no cambia una línea."""
     registro_clientes = registro_clientes if registro_clientes is not None else RegistroClientes()
     ledger: dict[str, list[dict]] = {}
 
@@ -82,7 +97,10 @@ def construir_ledger_pacientes(
         if periodo is None:
             continue
 
-        match = encontrar_o_crear_cliente(str(nombre), registro_clientes, periodo)
+        if campo_es_id_estable:
+            cliente_id = str(nombre).strip()
+        else:
+            cliente_id = encontrar_o_crear_cliente(str(nombre), registro_clientes, periodo).cliente_id
         evento = {
             "fecha": str(fecha_cruda),
             "periodo": periodo,
@@ -90,7 +108,7 @@ def construir_ledger_pacientes(
             "monto": r.get(campo_monto),
             "tratamiento": r.get(campo_tratamiento),
         }
-        ledger.setdefault(match.cliente_id, []).append(evento)
+        ledger.setdefault(cliente_id, []).append(evento)
 
     for eventos in ledger.values():
         eventos.sort(key=lambda e: e["periodo"])

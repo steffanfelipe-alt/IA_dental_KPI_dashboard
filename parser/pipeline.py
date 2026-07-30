@@ -28,7 +28,7 @@ from calidad import evaluar_calidad
 from catalogo_tecnologico import mapear_oportunidades
 from cruces import generar_cruces
 from coverage import VariableValue, evaluar_cobertura, variables_para_wizard
-from conflictos import resolver_conflictos
+from conflictos import fusionar_candidatos, resolver_conflictos
 from diagnostico import diagnosticar
 from matching import RegistroClientes
 from priorizacion import priorizar_oportunidades
@@ -36,6 +36,8 @@ from validacion import validar_variable, validar_identidades
 from reconciliacion import reconciliar
 from derivacion import derivar_variables_faltantes
 import segunda_lectura
+import metricas_paciente
+from explicaciones import nombre_humano
 from extractors import excel_parser, vision_parser
 
 
@@ -80,6 +82,46 @@ def extraer_archivo(
     nombre_archivo = Path(path).name
     variables = {var: replace(valor, archivo_origen=nombre_archivo) for var, valor in variables.items()}
     return variables, tasas_declaradas
+
+
+def _nombre_candidato(c: dict) -> str:
+    """De qué archivo/hoja habla un candidato de conflicto — ya usa el
+    dict enriquecido por conflictos._candidato (Fase I7): `archivo` si lo
+    tiene, si no `fuente` (ej. "confirmado_por_dueno" para un valor que el
+    dueño ya había confirmado, sin archivo)."""
+    return c.get("archivo") or c.get("fuente") or "una fuente sin identificar"
+
+
+def _pregunta_legible(c) -> str:
+    """Fase I7: antes eran 3 f-strings genéricas que nunca decían qué
+    archivo, qué valor, ni qué período — "Encontramos X en dos archivos
+    con valores distintos. ¿Cuál usamos?" sin un solo dato concreto. Ahora
+    arma la pregunta con los datos reales de `c.candidatos`, que desde
+    I7 ya trae `serie`/`periodo_vigente`/`explicacion` por candidato."""
+    nombre = nombre_humano(c.variable)
+    if c.tipo == "cobertura_distinta":
+        con_serie = [cand for cand in c.candidatos if "serie" in cand]
+        sin_serie = [cand for cand in c.candidatos if "serie" not in cand]
+        cobertura = ", ".join(
+            f"{_nombre_candidato(cand)} (hasta {cand.get('periodo_vigente')})" for cand in con_serie
+        ) or "un archivo"
+        totales = ", ".join(
+            f"{cand['valor']} en {_nombre_candidato(cand)}" for cand in sin_serie
+        ) or "otro archivo"
+        return (
+            f"\"{nombre}\": {cobertura} trae una serie mensual, y {totales} da un total "
+            f"sin fecha — puede que hablen de meses distintos, no necesariamente un error. "
+            f"¿Cuál usamos?"
+        )
+    if c.tipo == "contradice_confirmado":
+        confirmado, *discrepantes = c.candidatos
+        valores_nuevos = ", ".join(f"{d['valor']} ({_nombre_candidato(d)})" for d in discrepantes)
+        return (
+            f"Ya habías confirmado \"{nombre}\" = {confirmado['valor']}, pero "
+            f"{valores_nuevos} dice otra cosa. ¿Mantenemos tu confirmación o la actualizamos?"
+        )
+    valores = ", ".join(f"{cand['valor']} ({_nombre_candidato(cand)})" for cand in c.candidatos)
+    return f"\"{nombre}\": encontramos valores distintos — {valores}. ¿Cuál es correcto?"
 
 
 def _filtrar_por_validacion(
@@ -212,7 +254,35 @@ def procesar_migracion(
     for _, tasas in extraidas_por_archivo:
         tasas_declaradas.update(tasas)
 
-    variables, conflictos = resolver_conflictos([variables_previas or {}, *extraidas])
+    # Fase H4b: un ledger nunca pasa por resolver_conflictos. Esa función
+    # compara candidatos por IGUALDAD de `.valor` para decidir un ganador
+    # — funciona para un escalar o un dict plano, pero un ledger es un
+    # dict de LISTAS (no hasheable, ni comparable con sentido: dos
+    # archivos con historial de paciente no "compiten" por la misma
+    # respuesta, cada uno aporta eventos propios). Se saca de `extraidas`
+    # ANTES de resolver_conflictos y se fusiona acá — con lo que ya
+    # hubiera en variables_previas también, por si una migración anterior
+    # ya había poblado un ledger — dejando un único valor ya fusionado
+    # que se inyecta después de resolver_conflictos, en el mismo punto
+    # donde habría caído si hubiera ganado sin discusión.
+    ledgers = [v.pop("ledger_pacientes") for v in extraidas if "ledger_pacientes" in v]
+    ledger_previo = (variables_previas or {}).get("ledger_pacientes")
+    if ledger_previo is not None:
+        ledgers.insert(0, ledger_previo)
+    ledger_fusionado: Optional[VariableValue] = None
+    if ledgers:
+        fusionado: dict[str, list[dict]] = {}
+        for lv in ledgers:
+            for pid, eventos in lv.valor.items():
+                fusionado.setdefault(pid, []).extend(eventos)
+        for pid in fusionado:
+            fusionado[pid] = sorted(fusionado[pid], key=lambda e: e["periodo"])
+        ledger_fusionado = replace(ledgers[-1], valor=fusionado, confianza=min(lv.confianza for lv in ledgers))
+
+    variables_previas_sin_ledger = {k: v for k, v in (variables_previas or {}).items() if k != "ledger_pacientes"}
+    variables, conflictos = resolver_conflictos([variables_previas_sin_ledger, *extraidas])
+    if ledger_fusionado is not None:
+        variables["ledger_pacientes"] = ledger_fusionado
     variables, variables_en_cuarentena = _filtrar_por_validacion(variables)
     variables_en_conflicto = {c.variable for c in conflictos}
 
@@ -226,12 +296,22 @@ def procesar_migracion(
     for var in a_cuarentena_reconciliacion:
         vv = variables.pop(var, None)
         if vv is not None:
+            # Fase I2: antes el motivo era un string constante, igual para
+            # toda variable, sin decir qué KPI ni cuánto se alejaba. Se deja
+            # el string de siempre (nada lo dejó de usar) y se agrega
+            # "discrepancia" al lado, aditivo, con los números reales — es
+            # lo que explicaciones.py usa para armar el texto humano.
+            disc = next((d for d in discrepancias if var in d.variables), None)
             variables_en_cuarentena[var] = {
                 "valor": vv.valor, "fuente": vv.fuente,
                 "motivo": (
                     f"la tasa declarada en la planilla no coincide con lo calculado "
                     f"a partir de esta variable (ver discrepancias_reconciliacion)"
                 ),
+                "discrepancia": {
+                    "kpi_id": disc.kpi_id, "kpi_nombre": disc.kpi_nombre,
+                    "calculado": disc.calculado, "declarado": disc.declarado,
+                } if disc else None,
             }
 
     # Derivación (punto 1 del plan de cierre): completa una variable que la
@@ -261,6 +341,22 @@ def procesar_migracion(
     variables_ya_reconciliadas |= set(nuevas_derivadas)
     variables = _segunda_lectura_para_variables_dudosas(variables, variables_ya_reconciliadas, archivos, client)
 
+    # Fase H4c: si hay ledger_pacientes, ltv_real() es una suma real de
+    # eventos "pago" ya extraídos de filas concretas — no un despeje
+    # algebraico como derivacion.py, así que NO se marca fuente=derivado
+    # (eso la treaparía en confianza 0.6 como si fuera una estimación).
+    # Antes de evaluar_cobertura a propósito: ahí se decide si KPI 14 cae
+    # en kpis_calculados o en kpis_esperando_facturas. Nunca pisa un valor
+    # ya extraído o del wizard (mismo criterio que derivacion.py).
+    ledger_vv = variables.get("ledger_pacientes")
+    if ledger_vv is not None and "ingreso_por_paciente" not in variables:
+        ingreso = metricas_paciente.ltv_real(ledger_vv.valor)
+        if ingreso:
+            variables["ingreso_por_paciente"] = VariableValue(
+                valor=ingreso, fuente="ledger_pacientes",
+                confianza=ledger_vv.confianza, archivo_origen=ledger_vv.archivo_origen,
+            )
+
     cobertura = evaluar_cobertura(variables, variables_en_conflicto)
     preguntas = variables_para_wizard(cobertura)
 
@@ -278,6 +374,7 @@ def procesar_migracion(
         "variables_derivadas": [
             {
                 "variable": d.variable, "valor": d.valor, "kpi_id": d.kpi_id,
+                "kpi_nombre": KPI_BY_ID[d.kpi_id].nombre if d.kpi_id in KPI_BY_ID else None,
                 "desde_denominador": d.desde_denominador, "tasa_declarada": d.tasa_declarada,
             }
             for d in derivaciones
@@ -294,18 +391,10 @@ def procesar_migracion(
             {
                 "variable": c.variable,
                 "tipo": c.tipo,
-                # Fase E: un conflicto tipo="cobertura_distinta" (una fuente
-                # trae fecha, la otra no — ver conflictos.resolver_conflictos)
-                # no es necesariamente un error de datos: puede que las dos
-                # fuentes hablen de meses distintos. La pregunta lo dice así
-                # en vez de sugerir que uno de los dos números está mal.
-                "pregunta": (
-                    f"Encontramos {c.variable} en dos archivos con valores distintos, pero "
-                    f"uno trae fecha y el otro no — puede que hablen de meses distintos, no "
-                    f"necesariamente un error. ¿Cuál usamos?"
-                ) if c.tipo == "cobertura_distinta" else (
-                    f"Encontramos valores distintos para {c.variable}. ¿Cuál es correcto?"
-                ),
+                # Fase I7: la pregunta ahora nombra archivos, valores y
+                # períodos reales — antes eran 3 f-strings genéricas sin un
+                # solo dato concreto (ver _pregunta_legible).
+                "pregunta": _pregunta_legible(c),
                 "opciones": c.candidatos,
                 "permite_valor_manual": True,
             }
@@ -344,6 +433,16 @@ def procesar_migracion(
     # evaluar_cobertura, diagnosticar ni priorizar_oportunidades.
     resultado["cruces"] = generar_cruces(variables)
 
+    # Fase H4c: las 17 métricas de metricas_paciente.py, fuera de las 20
+    # KPIFormula por el mismo motivo que los cruces (docstring del
+    # módulo) — clave aparte, nunca entra a evaluar_cobertura ni a
+    # evaluar_calidad (que ya corrió arriba, así que esto no le cambia el
+    # input). None si no hay ledger, no {} — para que la UI distinga
+    # "sin datos de paciente todavía" de "el ledger está vacío".
+    resultado["metricas_paciente"] = (
+        metricas_paciente.calcular_todas(ledger_vv.valor) if ledger_vv is not None else None
+    )
+
     # Fases 4-6: diagnóstico estructurado + oportunidades del catálogo ya
     # priorizadas. Todo determinista, sin llamar a Claude — eso lo hace
     # interpretacion.py después, recibiendo este diagnóstico como input
@@ -372,18 +471,53 @@ def resolver_conflicto(
     variables_previas: dict[str, VariableValue],
     valor: Any = None,
     valor_manual: Any = None,
+    respuestas_diagnostico: Optional[dict[str, str]] = None,
+    candidatos: Optional[list[dict]] = None,
+    periodos_de_escalares: Optional[dict[int, str]] = None,
 ) -> dict:
     """
     Aplica la elección del dueño de la clínica sobre un conflicto pendiente
     (POST /onboarding/{clinica_id}/resolver-conflicto, ver README) y vuelve
     a correr procesar_migracion con esa variable ya confirmada.
+
+    Fase G5a: `respuestas_diagnostico` faltaba acá — sin reenviarlas,
+    `procesar_migracion` corre con el default `None` y las Fases 4-6
+    (diagnostico.py, catalogo_tecnologico.py, priorizacion.py) no se
+    ejecutan. Efecto real: el dueño resolvía un conflicto para GANAR un
+    KPI y en el mismo movimiento PERDÍA el diagnóstico y las oportunidades
+    que ya tenía calculados. Default `None` a propósito — aditivo, ningún
+    call-site existente ni el endpoint documentado cambian de
+    comportamiento si no lo pasan.
+
+    Fase I8: `candidatos` es la forma nueva — una lista de 1+ candidato-
+    dicts (la misma forma que arma `conflictos._candidato()`, con `serie`
+    si el candidato la tiene). Reemplaza a `valor`/`valor_manual` cuando
+    se usa. Con 1 candidato, arregla un bug real: el camino viejo
+    (`valor`) siempre construía un `VariableValue` escalar pelado, así que
+    "elegir" un candidato con 6 meses de historia le destruía la serie en
+    el mismo movimiento que la confirmaba. Con 2+, es "elegir los dos":
+    se fusionan por período en vez de forzar una elección — ver
+    `conflictos.fusionar_candidatos`. `valor`/`valor_manual` siguen
+    funcionando exactamente igual que siempre cuando `candidatos` no se
+    pasa, para no romper ningún llamador existente.
     """
-    valor_elegido = valor if valor_manual is None else valor_manual
+    if candidatos:
+        fusion = fusionar_candidatos(candidatos, periodos_de_escalares)
+        nueva = VariableValue(
+            valor=fusion["valor"], fuente="confirmado_por_dueno", confianza=1.0,
+            archivo_origen=None, serie=fusion["serie"], periodo=fusion["periodo"],
+            etiquetas_originales=fusion["etiquetas_originales"],
+        )
+    else:
+        valor_elegido = valor if valor_manual is None else valor_manual
+        nueva = VariableValue(valor=valor_elegido, fuente="confirmado_por_dueno", confianza=1.0, archivo_origen=None)
+
     variables_actualizadas = dict(variables_previas)
-    variables_actualizadas[variable] = VariableValue(
-        valor=valor_elegido, fuente="confirmado_por_dueno", confianza=1.0, archivo_origen=None,
+    variables_actualizadas[variable] = nueva
+    return procesar_migracion(
+        archivos=[], variables_previas=variables_actualizadas,
+        respuestas_diagnostico=respuestas_diagnostico,
     )
-    return procesar_migracion(archivos=[], variables_previas=variables_actualizadas)
 
 
 def sin_archivos(variables_previas: Optional[dict[str, VariableValue]] = None) -> dict:

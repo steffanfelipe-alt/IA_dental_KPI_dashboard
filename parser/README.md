@@ -8,36 +8,72 @@ una vez por variable, nunca una vez por KPI.
 
 ## Estructura
 
+32 módulos (30 de primer nivel + 2 extractores), agrupados por función:
+
 ```
+# Núcleo
 schema.py                    Vocabulario de ~28 variables + las 20 fórmulas de KPIs
 coverage.py                  Chequeo de cobertura por variable + priorización del wizard
 conflictos.py                Resolución de conflictos entre archivos/migraciones
 pipeline.py                  Orquestador: punto de entrada único (procesar_migracion)
+validacion.py                Guardas de tipo/forma/origen sobre cada variable extraída
+reconciliacion.py            Compara el KPI recalculado contra la tasa que la planilla ya declaraba
+derivacion.py                Completa una variable ausente despejándola de una tasa declarada
+segunda_lectura.py           Segunda opinión de Claude, sin contexto del primer mapeo, para confianza baja
+
+# Extractores
 extractors/
   excel_parser.py            Excel/CSV -> Claude mapea columnas ambiguas al vocabulario
   vision_parser.py           Fotos/PDF -> Claude Vision lee y mapea en un solo paso
-aranceles_com.py             Arancel del Círculo Odontológico de Mar del Plata (unidad "consulta")
-benchmarks.py                13 benchmarks argentinos por KPI + cálculo de gap (ver más abajo)
-interpretacion.py            Cruza gap + contexto cualitativo -> interpretación del asistente
-priorizacion.py              Motor de priorización: score = gap × impacto × factor_confiabilidad
-referencias/
-  benchmarks_research_AR.md  Research completo de benchmarks (fuente de benchmarks.py)
+claude_utils.py              Helpers compartidos: extraer_texto (saltea bloques de thinking)
 
+# Cruces y calidad del dato
+cruces.py                    Métricas derivadas fuera de las 20 KPIFormula (embudo + álgebra de unidades)
+cruces_propuestos.py         El modelo propone qué cruzar; nunca calcula el número
+calidad.py                   Data Quality Report: completitud/consistencia/confianza + suficiencia_datos
+agregados.py                 Promedio/mediana/suma sobre una serie ya extraída + detección de outliers
+formato.py                   Formatea un valor según su unidad (ARS, %, horas) para la UI
+
+# Trazabilidad e identidad
 trazabilidad.py               Lineage: de qué celda/fórmula salió cada valor (ver explicar())
 periodos.py                   Normaliza etiquetas de período a clave canónica ("2026-04")
-agregados.py                  Promedio/mediana/suma sobre una serie ya extraída + detección de outliers
 matching.py                   Resolución de identidad de pacientes (fuzzy matching + banda gris)
-ledger.py                     Arma ledger_pacientes a partir de registros transaccionales ya extraídos
+ledger.py                     Arma ledger_pacientes a partir de una hoja transaccional real
 metricas_paciente.py          17 métricas de riesgo/valor/ciclo de vida/atribución sobre el ledger
-calidad.py                    Data Quality Report: completitud/consistencia/confianza + suficiencia_datos
-contexto_cualitativo.py       Preguntas cualitativas por KPI (extraído de interpretacion.py)
-estacionalidad.py             Estacionalidad de Mar del Plata como dato estructurado (proxy sobre P51)
+
+# Diagnóstico y catálogo
 diagnostico.py                Diagnostic Engine: estado de evidencia, patrones cruzados, contradicciones
 catalogo_tecnologico.py       ~35 intervenciones reales de Agencia IA, indexadas por etapa del funnel
+priorizacion.py               Motor de priorización: score = gap × impacto × factor_confiabilidad
+estacionalidad.py             Estacionalidad de Mar del Plata como dato estructurado (proxy sobre P51)
+contexto_cualitativo.py       Preguntas cualitativas por KPI (extraído de interpretacion.py)
+preguntas_wizard.py           Texto exacto de la pregunta que ve el dueño por cada variable faltante
+
+# Interpretación y explicación
+interpretacion.py             Cruza gap + contexto cualitativo -> interpretación del asistente
+explicaciones.py              Traduce motivos técnicos (cuarentena/derivada/reconciliación) a lenguaje llano
+
+# Benchmarks
+benchmarks.py                 13 benchmarks argentinos por KPI + cálculo de gap (ver más abajo)
+aranceles_com.py              Arancel del Círculo Odontológico de Mar del Plata (unidad "consulta")
+referencias/
+  benchmarks_research_AR.md   Research completo de benchmarks (fuente de benchmarks.py)
+
+# Harness de prueba (no es el producto — ver nota más abajo)
+probar_manual.py              Streamlit: sube archivos, corre pipeline.py, muestra cada sección del payload
+
+# evals/
 evals/
   casos_diagnostico.py        Casos sintéticos para el Diagnostic Engine (ver nota de scope, §24)
   runner_diagnostico.py       Precisión de cuello de botella, falsos diagnósticos, % accionables
 ```
+
+**`probar_manual.py` no es el producto.** Es el harness con el que se prueba
+`pipeline.procesar_migracion` a mano (subir archivo, ver el payload completo, resolver
+conflictos con un click) — corre en una sola sesión de Streamlit, sin auth ni multi-clínica.
+La lógica que sí está lista para producto (`procesar_migracion`, `resolver_conflicto`) es
+pura: recibe paths y dicts, devuelve un payload JSON-serializable, sin ningún import de
+Streamlit — ver "Uso desde el endpoint de FastAPI" más abajo.
 
 ## Uso desde el endpoint de FastAPI
 
@@ -101,9 +137,11 @@ async def resolver_conflicto_endpoint(clinica_id: str, body: dict):
 
 Una vez que el dueño confirma, esa variable queda con
 `fuente == "confirmado_por_dueno"` y gana siempre frente a cualquier archivo
-nuevo que la contradiga — **salvo** que el archivo nuevo también la
-contradiga, caso que hoy no reabre un conflicto (ver `TODO` en
-`conflictos.resolver_conflictos`, fuera de alcance del plan original).
+nuevo que la contradiga. La confirmación sigue ganando siempre (no se pierde
+el trabajo previo), pero desde la Fase H **ya no pasa en silencio**: si un
+archivo nuevo trae un valor distinto, se genera un `Conflicto` con
+`tipo="contradice_confirmado"` para que el dueño sepa que algo no cierra
+(ver `conflictos.resolver_conflictos`).
 
 ## Cómo se prueba sin la API
 
@@ -236,23 +274,27 @@ rankear por encima de un gap mediano contra un dato oficial.
   decisión de fusión depende también de si el nombre de pila es
   compatible, no solo del score. Los casos de zona gris nunca se
   fusionan solos: aparecen en `conflictos_pendientes` (variable
-  `"identidad_paciente"`) para que el dueño confirme.
+  `"identidad_paciente"`) para que el dueño confirme. **No se llama en
+  absoluto cuando el identificador ya es estable** (ver
+  `campo_es_id_estable` abajo) — un ID como `"P1045"` no necesita fuzzy
+  matching, y pasarlo igual por ahí demostró fusionar en silencio
+  identificadores como `"Paciente 1"`/`"Paciente 2"`/`"Paciente 3"`.
 - **`ledger.py` + `metricas_paciente.py`**: `ledger_pacientes`
   (`{paciente_id: [eventos]}`) es el insumo de 17 métricas que las 20
   fórmulas de `schema.py` no pueden expresar (no-show recurrente por
   paciente, LTV real, concentración de ingresos, retención por cohorte,
   etc. — ver el docstring de `metricas_paciente.py` para la lista
-  completa). **Importante**: hoy ningún extractor en vivo arma
-  `ledger_pacientes` automáticamente desde una hoja real — eso requiere
-  extender el contrato del `SYSTEM_PROMPT` de `excel_parser.py` para que
-  Claude identifique columnas de nombre+fecha+tipo en una hoja
-  transaccional, cambio que necesita validarse contra la API real antes
-  de confiar en él. `construir_ledger_pacientes` ya está listo para
-  cuando esa extracción se conecte; mientras tanto, `_agregar_dict` SÍ
-  está enganchado al matching real para `ingreso_por_paciente` (pasando
-  `registro_clientes` a `aplicar_mapeo`), que es lo que corrige el LTV
-  subestimado del punto 3 del informe de deficiencias sin depender de
-  ese contrato nuevo.
+  completa). **`ledger_pacientes` ya se arma en vivo** (Fase H):
+  `extractors/excel_parser.py` declara un bloque `"ledger"` en el
+  `SYSTEM_PROMPT` para hojas `orientacion="transaccional"`, y
+  `construir_ledger_pacientes` recibe `campo_es_id_estable: bool = False`
+  — con `True`, bypassea `matching.py` por completo y usa el valor de la
+  columna directo como `cliente_id` (el camino real: un CSV de cobros con
+  `id_paciente` ya canónico). `ingreso_por_paciente` se deriva de
+  `metricas_paciente.ltv_real` cuando hay un ledger con eventos `pago`,
+  desbloqueando KPI 14 — ver la sección "Ledger de pacientes y KPI 14
+  (Fase H)" más abajo para el detalle completo, incluido el bug de fusión
+  silenciosa que motivó `campo_es_id_estable`.
 
 ## Diagnostic Engine (Fase 4)
 
@@ -320,49 +362,222 @@ de clínicas reales y un experto disponible, ninguno de los dos existía en
 esta sesión. `test_evals_diagnostico.py` corre los mismos casos como
 parte de la suite de regresión (es 100% determinista, no llama a Claude).
 
+## Cruces determinísticos y propuestos (Fases B/C/F)
+
+`cruces.py` calcula métricas fuera de las 20 `KPIFormula` fijas, en dos
+capas deterministas sin API: la capa de embudo (toda razón
+etapa-posterior/etapa-anterior es una conversión válida por construcción,
+vía `ETAPAS_EMBUDO`) y la capa de álgebra de unidades (análisis dimensional
+puro sobre `OPERACIONES_LEGALES` — `monto_ars ÷ conteo`, `conteo ÷ horas`,
+etc.). Nunca importa `anthropic`, así que sigue siendo testeable sin red.
+
+`cruces_propuestos.py` es la capa 3: el modelo **propone** qué cruzar y por
+qué le importaría al dueño (etapa del embudo + cómo ayuda a decidir), pero
+nunca calcula el número — cada propuesta pasa por `cruces.calcular_cruce`
+(el mismo motor de la capa 1/2) y por una validación dimensional propia.
+Confianza topeada en 0.6, igual que cualquier valor derivado. En
+`probar_manual.py` (sección 9b) el dueño acepta o descarta cada propuesta
+con un click; la aceptada se fusiona con la tabla de cruces confirmados de
+la sección 9, indistinguible de uno determinístico.
+
+Bug encontrado y corregido en el camino: Streamlit interpreta `$...$` como
+fórmula LaTeX, así que un monto en ARS dentro de un `st.markdown` (ej. "la
+serie histórica: 2026-01: $100.000, 2026-02: ...") se deformaba en
+pantalla. Se escapa el `$` en los 4 puntos donde un monto entra a un
+contexto markdown.
+
+## Arreglos de confiabilidad (Fase G)
+
+Auditoría contra archivos reales de una clínica (Excel + CSV), cinco
+defectos encontrados y corregidos, ninguno introducido por las fases
+anteriores:
+
+- **Trazabilidad que se perdía al fusionar series** (`_resolver_por_periodo`
+  en `conflictos.py`): guardaba sólo `fuente`/`confianza` del ganador de
+  cada período y descartaba `archivo_origen`, `trazabilidad`,
+  `etiquetas_originales` — 7 de 9 variables mostraban "sin traza
+  registrada" en la sección 2a aunque sí tuvieran origen. Corregido
+  guardando el `VariableValue` completo del ganador, no sólo dos campos.
+- **`max_tokens` insuficiente** en `interpretar_kpi` (800→2500) e
+  `interpretar_panel` (2000→12000) — ambos truncaban con datos reales.
+- **`costo_hora_sillon` declarada con la unidad equivocada**: era
+  `monto_ars`, pasó a `monto_ars/hora` (la definición siempre fue una
+  tarifa horaria) — esto solo elimina cruces sin sentido, sin escribir
+  ningún filtro nuevo.
+- **Whitelist de denominadores con sentido** (`DENOMINADORES_VOLUMEN` en
+  `schema.py`): un cruce `monto ÷ conteo` sólo se genera si el conteo
+  representa volumen de trabajo real (turnos, pacientes) — antes
+  `no_shows` podía terminar de denominador de un monto, sin sentido de
+  negocio.
+- **`resolver_conflicto` vaciaba el diagnóstico al resolver un conflicto**:
+  no reenviaba `respuestas_diagnostico` a `procesar_migracion`, así que el
+  dueño ganaba un KPI y perdía todo el diagnóstico/oportunidades en el
+  mismo movimiento. Corregido, y cableado a la UI (sección 4) con un
+  botón real de resolución.
+- **`estacionalidad.py` cableado a `diagnostico.py`**: daba una señal
+  determinista de temporada en vez de depender de que el modelo se
+  acordara de aplicarla desde el prompt.
+- **Opus 5 sólo para el informe largo** (`interpretar_clinica`) — los
+  otros dos entry points (`interpretar_kpi`, `interpretar_panel`) siguen
+  en Sonnet 5, es el único que corre con thinking adaptativo y arma las
+  10 secciones.
+
+## Ledger de pacientes y KPI 14 (Fase H)
+
+**El hallazgo que cambió el diseño del ledger.**
+`ledger.construir_ledger_pacientes` pasaba el identificador de paciente
+por `matching.encontrar_o_crear_cliente` (matching difuso de nombres). Con
+identificadores ya canónicos como `"Paciente 1"`/`"Paciente 2"`/`"Paciente
+3"` (comparten token + similitud 0.90, por encima del umbral de fusión
+automática), el sistema los fusionaba **en un solo cliente, en silencio**
+— justo lo que `matching.py` promete no hacer nunca. Causa raíz: un ID ya
+canónico no necesita pasar por matching difuso, que existe para el
+problema real de "Juan Pérez" vs "J. Perez". Arreglo: parámetro nuevo
+`campo_es_id_estable: bool = False` — con `True`, bypassea `matching.py`
+por completo y usa el valor de la columna directo como `cliente_id`.
+
+**`ledger_pacientes` ya se arma en vivo.** `extractors/excel_parser.py`
+declara un bloque `"ledger"` en el `SYSTEM_PROMPT` para hojas
+`orientacion="transaccional"` (columna de paciente + si es un ID estable,
+fecha, tipo de evento por `ledger.TIPOS_EVENTO`, monto y tratamiento
+opcionales) — una fila puede generar más de un evento (ej. un presupuesto
+aceptado es `presupuesto_emitido` **y** `presupuesto_aceptado`). Si más de
+un archivo de la misma migración aporta ledger, se fusionan por paciente
+en `pipeline.py` antes de `resolver_conflictos` (un ledger nunca compite
+por igualdad de valor — dos archivos con historial de paciente aportan
+eventos distintos, no versiones contradictorias del mismo dato).
+
+**KPI 14 (Valor del paciente / LTV) queda desbloqueado**:
+`pipeline.py` deriva `ingreso_por_paciente` con `metricas_paciente.ltv_real`
+cuando hay un ledger con eventos `pago` — verificado con datos reales:
+160 pacientes en el ledger, KPI 14 calculado en $288.584, y
+`concentracion_ingresos` mostrando que el top 10% de pacientes genera el
+32,5% de la facturación. `probar_manual.py` tiene una sección 10 nueva con
+las 17 métricas de `metricas_paciente.py` (no-show recurrente, LTV,
+concentración de ingresos, retención por cohorte, etc.), separada de los
+KPIs — nunca se mezclan, un cruce/métrica de paciente no tiene `kpi_id`.
+
+**Bug real encontrado con datos reales, no hipotético**:
+`periodos.normalizar_periodo` rechazaba cualquier fecha con componente de
+hora (`"2024-08-03 09:30:00"`, el timestamp típico de un export de
+sistema real) — silenciaba 643 filas completas de un CSV de cobros sin
+ningún aviso. Arreglado en el origen (`_fecha_desde_etiqueta` tolera un
+sufijo de hora opcional), no parcheado en el punto de uso — la misma
+función la usa `excel_parser._construir_serie_periodo`, así que el bug
+afectaba a cualquier hoja con fecha+hora, no sólo al ledger.
+
+`vision_parser.py` corrió por primera vez contra la API real (nunca tenía
+tests ni se había probado): ahora declara `thinking={"type": "disabled"}`
+(antes podía truncarse sin dejar texto), un item mal formado del modelo ya
+no tira abajo el lote entero, y dejó de ofrecer el tipo `"ledger"` en su
+vocabulario (una foto no puede producir un dict de listas).
+
+## Que el sistema se explique (Fase I)
+
+Fase que salió de usar el sistema de punta a punta por primera vez con los
+4 archivos reales juntos (Excel + 2 CSV + 1 foto) — no de una revisión de
+código.
+
+- **`explicaciones.py`** (nuevo): traduce los motivos técnicos de
+  cuarentena/derivada/reconciliación a lenguaje de dueño de clínica.
+  `validacion.py` no cambió sus mensajes (los tests dependen de ellos) —
+  el módulo nuevo vive aparte y traduce sin tocar la fuente.
+- **El catálogo tecnológico recomendaba mal**: `calcular_addressability`
+  penalizaba una intervención por si su descripción contenía la palabra
+  "API" o "sistema" (keyword-match sobre texto libre), no por mérito real
+  — un chatbot de respuesta instantánea quedaba sistemáticamente último
+  frente a alternativas peor etiquetadas que zafaban por redacción. Campo
+  explícito `requiere_integracion` en `Intervencion` reemplaza la
+  heurística. Además, una intervención sólo podía atacar un `kpi_objetivo`
+  — un agente de agendamiento 24/7 nunca podía proponerse para "tiempo de
+  primera respuesta" aunque también lo resuelva; `kpis_secundarios` lo
+  permite.
+- **El informe de clínica no veía la calidad real del dato**:
+  `interpretar_clinica` sólo recibía `calidad_datos` (4 números
+  agregados), nunca las cuarentenas, discrepancias, derivadas ni
+  conflictos reales — aunque el propio prompt le pide hablar de "dónde el
+  dato no alcanza o contradice lo declarado". Ahora recibe las cuatro
+  claves con los motivos ya traducidos por `explicaciones.py`.
+- **Los conflictos no explicaban de dónde salía cada número**:
+  `conflictos._candidato()` armaba un dict de 4 claves y descartaba serie,
+  trazabilidad y período — la UI no podía mostrar la cuenta porque nunca
+  la recibía. Ahora cada candidato trae la explicación completa (vía
+  `trazabilidad.explicar()`) y su serie si la tiene.
+- **Resolver un conflicto ya no obliga a elegir uno solo, ni destruye la
+  serie**: `resolver_conflicto` construía siempre un `VariableValue`
+  escalar pelado, así que elegir el candidato con 6 meses de historia
+  perdía esos 6 meses. `conflictos.fusionar_candidatos()` (nuevo) fusiona
+  dos candidatos con serie por período, o pide a qué período asignar un
+  escalar sin fecha — y preserva la serie incluso eligiendo un solo
+  candidato. De paso se corrigió un bug latente: `_resolver_por_periodo`
+  tomaba el "último período" por orden de aparición en los candidatos, no
+  cronológico.
+
 ## Pendiente
 
-- ~~Reemplazar el placeholder `"claude-sonnet-4-6"` por el string de modelo
-  vigente al momento de deployar.~~ Hecho 2026-07-27: `MODEL = "claude-sonnet-5"`
-  en `interpretacion.py`, `extractors/excel_parser.py` y
-  `extractors/vision_parser.py`.
-- Conectar `cargar_variables_de_supabase` / `guardar_variables_en_supabase`
-  con la tabla `kpi_snapshots` real.
-- Definir qué pasa cuando un archivo nuevo contradice una variable que el
-  dueño ya confirmó vía `/resolver-conflicto` (hoy gana la confirmación
-  previa en silencio — ver `TODO` en `conflictos.resolver_conflictos`).
-- KPIs `sin_benchmark` (7, 10, 19) no entran al ranking numérico de
-  `priorizacion.py` (no tienen gap contra el cual medir) — ver `TODO` en
-  `priorizacion.py`. Priorizarlos por tendencia propia es una extensión
-  que el plan maestro de benchmarks no especificó en fórmula.
-- Si aparece una encuesta/informe de FOA, CORA, COMP o una muestra de
-  5-10 clínicas de Mar del Plata con datos reales de gestión, reemplazar
-  los proxies internacionales en `benchmarks.py` y subir `confiabilidad`
-  (ver Recomendaciones en `referencias/benchmarks_research_AR.md`).
-- `interpretacion.interpretar_kpi` nunca se probó contra la API real
-  (client=None por defecto en los tests) — falta validar con una key de
-  Anthropic que el criterio "mismo valor, contextos opuestos -> distinta
-  interpretación" se sostiene en la salida del modelo, no solo en el
-  payload que se le manda.
-- **Extraer `ledger_pacientes` en vivo desde una hoja transaccional real**:
-  extender el `SYSTEM_PROMPT` de `excel_parser.py` para que Claude
-  identifique columnas de nombre/fecha/tipo/monto/tratamiento en una hoja
-  transaccional, y validar ese cambio de contrato contra la API real
-  (evals nuevos, no solo los deterministas). Hoy `ledger.py` y
-  `metricas_paciente.py` están completos y probados, pero alimentados a
-  mano — nada en el pipeline arma el ledger todavía desde un archivo real.
-- Nueva dependencia: **`rapidfuzz`** (matching.py). El venv del proyecto
-  no traía `pip` funcionando — hubo que arrancarlo con
-  `python3 -m ensurepip --upgrade` antes de poder instalarla. No hay
-  `requirements.txt` en el repo; si se agrega uno, `rapidfuzz` tiene que
-  quedar ahí.
-- **Validación real del Diagnostic Engine (§24 del Documento Maestro)**:
-  hoy solo hay casos sintéticos (`evals/casos_diagnostico.py`). Falta el
-  circuito real — casos anonimizados de clínicas reales, diagnóstico de
-  un experto humano, comparación, y ajuste de reglas/benchmarks/prompt
-  según esa comparación — antes de confiar en el motor en producción.
-- **`Intervencion.periodo_evaluacion_semanas`** queda en `None` en las
-  ~35 intervenciones del catálogo — pendiente de confirmar con el usuario
-  cuántas semanas darle a cada una antes de medir impacto.
-- **"Reputación"** (pedido de reseña) sigue aproximado con KPI 10 en vez
-  de tener variable propia — pendiente de decisión.
+**363 tests verdes** al momento de escribir esto (2026-07-30) — el número sigue subiendo
+fase a fase, no tomarlo como techo.
+
+### Pendientes reales de la Fase I, frenados por crédito de API
+
+1. **Terminar I6** — el `SYSTEM_PROMPT` de hojas transaccionales se reforzó para que declarar
+   `columna_periodo` sea imperativo cuando hay columna de fecha (antes era opcional, y sin
+   eso una hoja de 26 meses se sumaba entera en un solo número). Confirmado con
+   `cobros_historico.csv` (26 meses): funcionó. **Falta confirmar con
+   `presupuestos_marzo2026.csv`** (un solo mes) — en la última corrida el modelo no le aplicó
+   el refuerzo a ese archivo particular. Hipótesis sin confirmar: con un solo mes el modelo
+   puede estar razonando "no hay variación que rastrear" y saltándose la instrucción: si se
+   confirma, hace falta un ejemplo explícito de archivo de un solo mes en el prompt.
+2. **La verificación end-to-end final de la Fase I**: correr los 4 archivos reales juntos
+   (Excel + los 2 CSV + la foto) una vez más por la UI y confirmar que ninguna sección se
+   rompió.
+
+Los dos están frenados desde el 2026-07-30 (`anthropic.BadRequestError: Your credit balance
+is too low`) — retomar cuando haya crédito de la API de Anthropic disponible.
+
+### Hallazgos confirmados con datos reales, sin arreglar todavía
+
+- **6 conceptos de una tabla de recall no tienen variable propia** (pacientes activos en
+  cartera, inactivos +12 meses, reseñas pedidas, llamados salientes, turnos cancelados, tasa
+  de ausentismo). El más urgente es `turnos_cancelados`: confirmado con una corrida real que,
+  sin esa variable, el extractor mapea las cancelaciones directo a `no_shows`, contaminando
+  KPI 4. Y sin `pacientes_activos_cartera`, `pacientes_vuelven_control` acepta un valor con
+  el denominador equivocado (confirmado: confianza alta, 0.85-0.9, no la baja que debería
+  tener por la ambigüedad). Aditivo a `schema.py`, no requiere cambio de prompt.
+- **`costo_hora_sillon` está mapeada de la columna equivocada** — confirmado, no hipótesis:
+  el valor de un mes real coincide exactamente con "Costos operativos" de otra hoja (un total
+  mensual, no una tarifa por hora). No existe hoy una variable para "costo operativo mensual
+  total", así que el extractor fuerza el mapeo a la más parecida. Necesita una variable nueva
+  + ajuste de prompt.
+- **`segunda_lectura` nunca alcanza a variables de foto o PDF**: siempre intenta releer el
+  grid con `excel_parser.leer_hojas_crudas`, que para una imagen lanza y se descarta en
+  silencio — justo las variables que más lo necesitarían (el prompt de `vision_parser` pide
+  confianzas de 0.3-0.5 para manuscritos). Requiere un camino de API nuevo (reenviar la
+  imagen), no un ajuste.
+- **El ledger guarda período (mes), no día**: un `dias_hasta_respuesta` de un CSV real (1 a
+  12 días) se pierde en la agregación mensual. Cambiar la resolución toca `ledger.py` + las
+  17 métricas de `metricas_paciente.py` (todas comparan con `_diferencia_meses`).
+- **`impacto_por_kpi` está plano en 1.0** (`pipeline.py`) — la dimensión "cuánto mueve el
+  negocio" no aporta nada al ranking de oportunidades todavía. Y 5 intervenciones del
+  catálogo con `kpi_objetivo=None` son estructuralmente inalcanzables (`mapear_oportunidades`
+  sólo matchea por `kpi_objetivo`, nunca por `variable_objetivo`).
+
+### Pendientes de antes, siguen sin resolver
+
+- Conectar `cargar_variables_de_supabase` / `guardar_variables_en_supabase` con la tabla
+  `kpi_snapshots` real — no hay Supabase conectado todavía.
+- KPIs `sin_benchmark` (7, 10, 19) no entran al ranking numérico de `priorizacion.py` (no
+  tienen gap contra el cual medir) — ver `TODO` en `priorizacion.py`.
+- Si aparece una encuesta/informe de FOA, CORA, COMP o una muestra de 5-10 clínicas de Mar
+  del Plata con datos reales de gestión, reemplazar los proxies internacionales en
+  `benchmarks.py` y subir `confiabilidad` (ver Recomendaciones en
+  `referencias/benchmarks_research_AR.md`).
+- **Validación real del Diagnostic Engine (§24 del Documento Maestro)**: hoy sólo hay casos
+  sintéticos (`evals/casos_diagnostico.py`). Falta el circuito real — casos anonimizados de
+  clínicas reales, diagnóstico de un experto humano, comparación, y ajuste de
+  reglas/benchmarks/prompt según esa comparación.
+- **"Reputación"** (pedido de reseña) sigue aproximado con KPI 10 en vez de tener variable
+  propia.
+- No hay `requirements.txt` en el repo — las dependencias reales están instaladas en el
+  `venv/` local (`anthropic`, `pandas`, `openpyxl`, `xlrd`, `rapidfuzz`, `streamlit`,
+  `python-dotenv`, entre otras). Si se agrega uno, congelar las versiones del `venv` actual.

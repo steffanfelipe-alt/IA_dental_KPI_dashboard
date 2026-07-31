@@ -1,0 +1,79 @@
+# CI: lints the parser (informational) and runs the OFFLINE parser test suite.
+# Only tests that pass with no Claude API key and never read the gitignored
+# parser/datos_clinica_real/ are run here; real-API tests live in tests-api.yml.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install ruff
+        run: pip install ruff
+
+      # LINT is INFORMATIONAL, not blocking: the parser has never been linted,
+      # so failing every PR on pre-existing style debt would be impractical.
+      # To make linting a hard gate later, delete the `continue-on-error` line.
+      - name: Lint (ruff, informational)
+        continue-on-error: true
+        run: ruff check parser
+
+      # OFFLINE test allowlist (explicit, not a glob). Each parser/test_*.py is a
+      # standalone runner (no pytest): a nonzero exit means a test failed.
+      # `set -e` stops the job at the first failing test.
+      - name: Run offline test suite
+        run: |
+          set -euo pipefail
+          tests=(
+            parser/test_agregados.py
+            parser/test_benchmarks.py
+            parser/test_calidad.py
+            parser/test_catalogo_tecnologico.py
+            parser/test_conflictos.py
+            parser/test_coverage.py
+            parser/test_cruces.py
+            parser/test_cruces_propuestos.py
+            parser/test_derivacion.py
+            parser/test_diagnostico.py
+            parser/test_evals_diagnostico.py
+            parser/test_excel_parser.py
+            parser/test_explicaciones.py
+            parser/test_formato.py
+            parser/test_interpretacion.py
+            parser/test_ledger.py
+            parser/test_matching.py
+            parser/test_metricas_paciente.py
+            parser/test_periodos.py
+            parser/test_pipeline.py
+            parser/test_priorizacion_extendida.py
+            parser/test_reconciliacion.py
+            parser/test_segunda_lectura.py
+            parser/test_trazabilidad.py
+            parser/test_validacion.py
+            parser/test_vision_parser.py
+          )
+          for t in "${tests[@]}"; do
+            echo "::group::$t"
+            python "$t"
+            echo "::endgroup::"
+          done

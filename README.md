@@ -32,6 +32,12 @@ Contenido de esta entrega:
   migrados dan valores distintos para la misma variable con confianza
   empatada. Independiente del plan de benchmarks. Ejecutado.
 
+- **CONTRIBUTING.md** — guía de contribución y desarrollo seguro: testing
+  con IA de por medio, CI/CD, flujo de Pull Requests (reglas de oro),
+  GitHub Actions del repo, protección de `main`, review de seguridad con IA
+  (paso futuro) y release-please. Incluye el checklist antes de abrir un PR.
+  Leerla antes de sumar cambios.
+
 ## Referencia externa
 
 El mapa completo de arquitectura (stack, interfaces, flujo del onboarding,

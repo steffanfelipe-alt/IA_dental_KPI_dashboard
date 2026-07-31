@@ -1,0 +1,24 @@
+# Release Please: automates version bumps, CHANGELOG, and GitHub releases.
+#
+# REQUIRES Conventional Commits: only `feat:` and `fix:` (and `feat!:`/`fix!:`
+# or a `BREAKING CHANGE:` footer) trigger a release PR and a version bump.
+# Commits that do NOT follow that format (e.g. plain messages, chore:, docs:)
+# will NOT produce a new version.
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

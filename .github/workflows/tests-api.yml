@@ -1,0 +1,44 @@
+# Real-Claude-API checks. MANUAL ONLY (workflow_dispatch): these hit the live
+# Anthropic API and CONSUME CREDITS, so they must never run automatically on
+# every push/PR.
+#
+# Empirical finding: NO parser/test_*.py currently requires the real API. Every
+# Claude interaction in the test suite is dependency-injected with a fake client
+# (e.g. _ClienteFalso in test_excel_parser.py), so all 26 tests are offline-safe
+# and already run in ci.yml. The only genuine credit-consuming entry point is
+# parser/evals/runner.py (the evaluation harness), which reads committed fixtures
+# under parser/evals/fixtures/ -- NOT the gitignored parser/datos_clinica_real/,
+# which does not exist in CI and is therefore intentionally excluded here.
+name: tests-api
+
+on:
+  workflow_dispatch:
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Real-API evaluation harness. Uses the ANTHROPIC_API_KEY secret and the
+      # committed demo fixtures only. This is the sole real-API entry point in
+      # the repo; add real-API test_*.py files to this step as they appear.
+      - name: Run real-API evaluation harness
+        run: |
+          set -euo pipefail
+          python parser/evals/runner.py

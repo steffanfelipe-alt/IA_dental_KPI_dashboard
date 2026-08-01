@@ -28,7 +28,7 @@
 
 ## Patrones
 
-- **Vocabulario común + fórmulas puras** (`schema.py`): un único diccionario de ~30 variables que alimenta wizard, extractores y las 20 `KPI_FORMULAS`. Habilita la cobertura "por variable, no por KPI".
+- **Vocabulario común + fórmulas puras** (`schema.py`): un único diccionario de ~30 variables que alimenta wizard, extractores y las 21 `KPI_FORMULAS`. Habilita la cobertura "por variable, no por KPI".
 - **Orquestador puro** (`pipeline.py`): `procesar_migracion` / `resolver_conflicto` reciben paths/dicts y devuelven un dict JSON-serializable, sin ningún import de Streamlit ni framework web. Ese es el contrato con el futuro endpoint de FastAPI.
 - **Separación estricta determinista vs. LLM**: `cruces.py`, `diagnostico.py`, `priorizacion.py`, `estacionalidad.py`, `calidad.py`, `agregados.py` NO importan `anthropic` (testeables sin red). La capa que llama a Claude (`cruces_propuestos.py`, `interpretacion.py`, `segunda_lectura.py`, extractores) consume los hechos ya verificados; nunca al revés. Los SYSTEM_PROMPT le piden explícitamente a Claude NO recalcular gaps ni patrones, solo redactarlos.
 - **SYSTEM_PROMPT derivado de `schema.py`, nunca hardcodeado**: los extractores inyectan JSON generado desde el schema (`_VARIABLES_JSON`, `_KPIS_PORCENTUALES_JSON`, `_TIPOS_EVENTO_JSON`), filtrando `VARIABLE_TYPES` por `list`/`ledger`.
@@ -55,7 +55,7 @@
 
 ```
 parser/                          Motor de KPIs — casi todo el código real del repo
-  schema.py                      Vocabulario de ~30 variables + las 20 fórmulas de KPI (núcleo)
+  schema.py                      Vocabulario de ~30 variables + las 21 fórmulas de KPI (núcleo)
   coverage.py                    Cobertura por variable + priorización de preguntas del wizard
   conflictos.py                  Resolución de conflictos entre archivos/migraciones
   pipeline.py                    Orquestador — punto de entrada único (procesar_migracion)
@@ -135,6 +135,7 @@ Para patrones detallados, usá estos skills del proyecto (`.claude/skills/`):
 - `parser-nueva-intervencion-catalogo` — agregar una intervención al catálogo tecnológico
 - `parser-editar-benchmark` — agregar/editar un benchmark argentino o el arancel de referencia
 - `parser-test-sin-pytest` — escribir un `test_*.py` nuevo siguiendo la convención sin pytest
+- `developing-with-streamlit` — cualquier tarea sobre `probar_manual.py` (el harness Streamlit): crear, editar, **debuggear**, estilos/CSS/tema, widgets, componentes custom (`st.components.v2`). Invocar SIEMPRE antes de tocar ese archivo, no solo para bugs — también para levantar el server, entender warnings de Streamlit (ej. el de módulos cacheados en `_server_iniciado_en`), o cambiar layout.
 
 Skills externas recomendadas de **skills.sh** (instalables con `npx skills add <owner/repo>`; verificadas en su API en vivo). Instalar según la etapa:
 
@@ -146,7 +147,8 @@ _Etapa que viene (envolver el motor):_
 - `fastapi/fastapi/fastapi` — envolver `pipeline.procesar_migracion` en el endpoint del onboarding.
 - `supabase/agent-skills/supabase-postgres-best-practices` — conectar `kpi_snapshots` (hoy hay dos stubs `cargar_/guardar_variables_de_supabase`).
 - `czlonkowski/n8n-skills/n8n-workflow-patterns` — workflows de n8n.
-- `streamlit/agent-skills/developing-with-streamlit` — si el wizard sigue en Streamlit.
+
+> `streamlit/agent-skills/developing-with-streamlit` ya está instalada (`.claude/skills/developing-with-streamlit`) — ver Skills Reference arriba, no hace falta instalarla de nuevo.
 
 > Nota: las skills de **pytest** de skills.sh NO aplican — la suite es standalone sin pytest. Solo considerarlas si alguna vez se decide migrar.
 
@@ -164,3 +166,4 @@ Al realizar estas acciones, invocá SIEMPRE el skill correspondiente primero:
 | Agregar/editar un valor en `benchmarks.py` o `aranceles_com.py` | `parser-editar-benchmark` |
 | Escribir un `test_*.py` nuevo o sumar tests a uno existente | `parser-test-sin-pytest` |
 | Agregar un KPI a `KPI_FORMULAS` (toca variables + benchmark + tests) | `parser-nueva-variable` + `parser-editar-benchmark` + `parser-test-sin-pytest` |
+| Debuggear, editar, stylear o levantar `probar_manual.py` (cualquier cosa en Streamlit) | `developing-with-streamlit` |

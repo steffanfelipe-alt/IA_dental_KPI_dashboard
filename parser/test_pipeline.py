@@ -370,6 +370,54 @@ def test_pregunta_contradice_confirmado_nombra_el_valor_confirmado():
         _restaurar_extractores(original)
 
 
+def test_un_archivo_que_explota_no_tira_abajo_la_migracion_de_los_demas():
+    # Bug real: control_recall_junio2026.png hacía explotar vision_parser
+    # con un JSONDecodeError sin capturar, y eso tiraba abajo TODA la
+    # migración aunque otros archivos (xlsx, csv) fueran perfectamente
+    # procesables. extraer_archivo ahora se llama dentro de un try/except
+    # por archivo — este test fija ese comportamiento con un extractor que
+    # explota de verdad, sin mockear json.loads.
+    original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
+
+    def extractor_ok(path, client, registro_clientes=None):
+        return {
+            "no_shows": VariableValue(40, "migracion_excel", 0.9),
+            "turnos_agendados": VariableValue(100, "migracion_excel", 0.9),
+        }, {}
+
+    def extractor_que_explota(path, client, registro_clientes=None):
+        raise ValueError("JSON inválido, no se pudo parsear la respuesta de Claude")
+
+    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": extractor_ok, ".png": extractor_que_explota}
+    try:
+        resultado = pipeline.procesar_migracion(["clinica.xlsx", "control_recall.png"], client=None)
+
+        assert len(resultado["archivos_fallidos"]) == 1
+        assert resultado["archivos_fallidos"][0]["archivo"] == "control_recall.png"
+        assert "JSON inválido" in resultado["archivos_fallidos"][0]["error"]
+
+        # El archivo que sí funcionó no se pierde: sus variables llegan
+        # igual a KPIs calculados.
+        assert 4 in resultado["kpis_calculados"]
+    finally:
+        _restaurar_extractores(original)
+
+
+def test_todos_los_archivos_fallan_no_rompe_devuelve_migracion_vacia():
+    original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
+
+    def extractor_que_explota(path, client, registro_clientes=None):
+        raise RuntimeError("timeout de red")
+
+    pipeline.EXTRACTOR_POR_EXTENSION = {".png": extractor_que_explota}
+    try:
+        resultado = pipeline.procesar_migracion(["a.png", "b.png"], client=None)
+        assert len(resultado["archivos_fallidos"]) == 2
+        assert resultado["kpis_calculados"] == {}
+    finally:
+        _restaurar_extractores(original)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

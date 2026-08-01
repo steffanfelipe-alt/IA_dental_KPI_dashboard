@@ -142,6 +142,13 @@ BENCHMARKS_AR: dict[int, BenchmarkKPI] = {
              "(CAC 100-200 EUR en Google Ads), no comparable de forma confiable. "
              "Reactivar cuesta 5-7x menos que captar (dirección, no monto).",
     ),
+    21: BenchmarkKPI(
+        21, None, None, "%", mejor_es="mayor",
+        confiabilidad="sin_benchmark",
+        nota="No hay % estándar argentino de reactivación sobre base inactiva "
+             "total. Se define meta propia en el módulo de objetivos (futuro). "
+             "Mostrar valor + serie, sin veredicto (igual que el KPI 10).",
+    ),
 }
 
 

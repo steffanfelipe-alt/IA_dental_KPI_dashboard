@@ -226,6 +226,7 @@ def procesar_migracion(
         "kpis_bloqueados_por_diseno": [ids],   # se calculan solos, no se muestran como "pendiente"
         "kpis_esperando_facturas": [ids],
         "kpis_esperando_resolucion_conflicto": {id: [variables_en_conflicto]},
+        "archivos_fallidos": [ {archivo, error} ],  # extractor tiró excepción, no se pudo leer ese archivo
         "preguntas_wizard": [ {variable, tipo, kpis_que_desbloquea, prioridad} ],
         "conflictos_pendientes": [ {variable, tipo, pregunta, opciones, permite_valor_manual} ],
         "variables_a_confirmar": [ ... ],       # baja confianza, mostrar como sugerencia
@@ -248,7 +249,20 @@ def procesar_migracion(
     # Pérez" en un archivo y "J. Perez" en otro resuelven al mismo
     # paciente, no solo dentro de una misma hoja.
     registro_clientes = RegistroClientes()
-    extraidas_por_archivo = [extraer_archivo(a, client, registro_clientes=registro_clientes) for a in archivos]
+    extraidas_por_archivo = []
+    archivos_fallidos: list[dict[str, str]] = []
+    for a in archivos:
+        try:
+            extraidas_por_archivo.append(extraer_archivo(a, client, registro_clientes=registro_clientes))
+        except Exception as exc:
+            # Un archivo problemático (ej. una foto ambigua que hace que
+            # vision_parser no pueda parsear el JSON de Claude) no puede
+            # tirar abajo una migración de varios documentos donde el resto
+            # sí es procesable — mismo criterio que cruces_propuestos.py
+            # aplica a un ítem mal formado dentro de un lote, llevado a
+            # nivel archivo completo. Antes se perdía TODA la migración por
+            # un solo documento raro.
+            archivos_fallidos.append({"archivo": Path(a).name, "error": str(exc)})
     extraidas = [variables for variables, _ in extraidas_por_archivo]
     tasas_declaradas: dict[int, object] = {}
     for _, tasas in extraidas_por_archivo:
@@ -370,6 +384,7 @@ def procesar_migracion(
         "kpis_esperando_facturas": cobertura.kpis_esperando_facturas,
         "kpis_esperando_resolucion_conflicto": cobertura.kpis_esperando_resolucion_conflicto,
         "kpis_con_error": cobertura.kpis_con_error,
+        "archivos_fallidos": archivos_fallidos,
         "variables_en_cuarentena": variables_en_cuarentena,
         "variables_derivadas": [
             {
@@ -426,7 +441,7 @@ def procesar_migracion(
     # `resultado` — no dispara ninguna extracción ni llamada a Claude.
     resultado["calidad_datos"] = evaluar_calidad(resultado)
 
-    # Fase B: cruces determinísticos fuera de las 20 KPIFormula (ver
+    # Fase B: cruces determinísticos fuera de las 21 KPIFormula (ver
     # cruces.py). Corre siempre, con o sin respuestas_diagnostico —
     # a diferencia de las Fases 4-6, no depende de contexto cualitativo.
     # Clave aparte a propósito: un Cruce no tiene kpi_id y no entra a

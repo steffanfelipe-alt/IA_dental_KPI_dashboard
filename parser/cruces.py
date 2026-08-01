@@ -79,7 +79,7 @@ class Cruce:
     impacto_decision: str = ""
 
 
-# Pares (numerador, denominador) que alguna de las 20 KPIFormula ya calcula
+# Pares (numerador, denominador) que alguna de las 21 KPIFormula ya calcula
 # — un cruce que reproduce exactamente ese par se descarta en
 # `generar_cruces`, para no duplicar un KPI que ya existe con otro nombre.
 _PARES_YA_EN_CATALOGO: set[tuple[str, str]] = {
@@ -326,7 +326,7 @@ def _score(cruce: Cruce) -> tuple:
 
 def generar_cruces(variables: dict, limite: Optional[int] = LIMITE_DEFAULT) -> list[Cruce]:
     """Orquestador: junta las dos capas, saca los pares que el catálogo de
-    20 KPIs ya calcula por otro nombre, y ordena por relevancia (¿el
+    21 KPIs ya calcula por otro nombre, y ordena por relevancia (¿el
     catálogo de intervenciones ya la señala como objetivo? ¿cuántos
     períodos comunes tiene? ¿cuánto se movió?) — más relevante primero.
     `limite=None` devuelve todo, sin techo."""

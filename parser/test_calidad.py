@@ -47,7 +47,7 @@ def test_completitud_excluye_kpis_bloqueados_por_diseno():
     # Si los únicos 2 KPIs bloqueados por diseño son los únicos que
     # "faltan", la completitud debería ser 100%, no 90% — no tiene sentido
     # penalizar algo que nunca se le pide al dueño.
-    kpis_calculados = {i: {} for i in range(1, 19)}  # 18 de los 20
+    kpis_calculados = {i: {} for i in range(1, 20)}  # 19 de los 21
     reporte = evaluar_calidad(_payload_base(
         kpis_calculados=kpis_calculados, kpis_bloqueados_por_diseno=[16, 17],
     ))

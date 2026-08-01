@@ -109,6 +109,33 @@ def test_formula_que_falla_queda_en_kpis_con_error_no_desaparece():
     assert "AttributeError" in resultado.kpis_con_error[15]
 
 
+def test_kpi21_penetracion_reactivacion_se_calcula_con_reactivados_y_base_total():
+    # KPI 21 = pacientes_reactivados / pacientes_inactivos_total, en %.
+    # Con las dos variables presentes debe calcularse el valor esperado
+    # (30 reactivados sobre una base inactiva total de 600 = 5.0%).
+    variables = {
+        "pacientes_reactivados": VariableValue(30, "wizard", 0.9),
+        "pacientes_inactivos_total": VariableValue(600, "wizard", 0.9),
+    }
+    resultado = evaluar_cobertura(variables)
+    assert 21 in resultado.kpis_calculados, "el KPI 21 debería estar calculado"
+    assert resultado.kpis_calculados[21]["valor"] == round(100 * 30 / 600, 1)  # 5.0
+    assert 21 not in resultado.kpis_parciales
+
+
+def test_kpi21_queda_parcial_si_falta_la_base_inactiva_total():
+    # Sin pacientes_inactivos_total (variable normal, va al wizard), el KPI
+    # 21 no se calcula: queda pendiente esa única variable, no bloqueado ni
+    # esperando facturas.
+    variables = {
+        "pacientes_reactivados": VariableValue(30, "wizard", 0.9),
+    }
+    resultado = evaluar_cobertura(variables)
+    assert 21 not in resultado.kpis_calculados
+    assert resultado.kpis_parciales[21] == ["pacientes_inactivos_total"]
+    assert "pacientes_inactivos_total" in resultado.variables_pendientes
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

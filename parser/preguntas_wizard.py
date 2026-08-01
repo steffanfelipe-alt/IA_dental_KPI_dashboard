@@ -101,6 +101,11 @@ PREGUNTAS_WIZARD: dict[str, PreguntaWizard] = {
         "De esos, ¿cuántos efectivamente vuelven?",
         "number", "P43", adaptada=True),
 
+    "pacientes_inactivos_total": PreguntaWizard(
+        "pacientes_inactivos_total",
+        "¿Cuántos pacientes tenés hoy inactivos en total — que hace más de un año que no vienen?",
+        "number", "P43", adaptada=True),
+
     "pacientes_atendidos_periodo": PreguntaWizard(
         "pacientes_atendidos_periodo",
         "¿Cuántos pacientes atienden en total por mes?",

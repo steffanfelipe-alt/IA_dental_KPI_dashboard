@@ -1,7 +1,7 @@
 """
 schema.py
 
-Vocabulario común de variables + las 20 fórmulas de KPIs.
+Vocabulario común de variables + las 21 fórmulas de KPIs.
 
 Esta es la pieza central de todo el parser: en vez de que cada KPI defina
 su propia forma de leer datos, todo (wizard, migración de Excel, fotos,
@@ -11,7 +11,9 @@ variable, no por KPI" que se decidió en el diseño del onboarding: dos KPIs
 que comparten una variable (ej. consultas_nuevas_mes) nunca la piden dos
 veces.
 
-Corresponde 1:1 a la tabla "6 · Fórmulas de los 20 KPIs" del Miro.
+Las primeras 20 corresponden 1:1 a la tabla "6 · Fórmulas de los 20 KPIs"
+del Miro; la 21 (penetración de reactivación) se agregó después como
+complemento del KPI 9 y no está en esa tabla original.
 """
 
 from dataclasses import dataclass, field
@@ -81,6 +83,12 @@ VARIABLE_TYPES = {
     "pacientes_vuelven_control": "int",
     "pacientes_inactivos_contactados": "int",
     "pacientes_reactivados": "int",
+    # STOCK (no es etapa del embudo, no entra a ETAPAS_EMBUDO ni a
+    # DENOMINADORES_VOLUMEN): la base inactiva TOTAL de la clínica. Es el
+    # denominador del KPI 21 (penetración de reactivación). No confundir con
+    # pacientes_inactivos_contactados, que es sólo los que se contactaron
+    # este período — ver `no_confundir_con` en METRICAS.
+    "pacientes_inactivos_total": "int",
     "pacientes_atendidos_periodo": "int",
     "resenas_nuevas": "int",
     "referidos_nuevos": "int",
@@ -122,7 +130,7 @@ VARIABLE_TYPES = {
     # se pide en el wizard (SOLO_MIGRACION_O_SISTEMA más abajo): se arma a
     # partir de una hoja transaccional con nombre + fecha por registro, una
     # vez que el nombre pasó por matching.resolver_lote. No es parte de
-    # las 20 fórmulas de KPI_FORMULAS (ver metricas_paciente.py) — es un
+    # las 21 fórmulas de KPI_FORMULAS (ver metricas_paciente.py) — es un
     # insumo aparte para las métricas de riesgo/fuga, valor/concentración,
     # ciclo de vida y atribución que la identidad de paciente desbloquea.
     "ledger_pacientes": "ledger",
@@ -275,6 +283,20 @@ METRICAS: dict[str, MetricaInfo] = {
         "De esos pacientes inactivos contactados, cuántos efectivamente volvieron.",
         "conteo",
         no_confundir_con="pacientes_vuelven_control (retención normal, no reactivación de inactivos)",
+    ),
+    "pacientes_inactivos_total": MetricaInfo(
+        "Pacientes inactivos (+12 meses)",
+        "Total de pacientes de la base que están inactivos — que hace más de "
+        "un año (~12 meses) que no vienen. Es un STOCK (la foto del total "
+        "dormido de la cartera), no un conteo de actividad del período. La "
+        "clínica lo conoce por su hoja/foto de recall o el dueño lo responde.",
+        "conteo",
+        sinonimos=["pacientes inactivos", "base inactiva", "inactivos +12 meses", "cartera inactiva"],
+        no_confundir_con=(
+            "pacientes_inactivos_contactados (ese es sólo los inactivos que la "
+            "clínica CONTACTÓ este período; este es la base inactiva TOTAL, un "
+            "stock que no depende de la campaña del mes)"
+        ),
     ),
     "pacientes_atendidos_periodo": MetricaInfo(
         "Pacientes atendidos en el período",
@@ -458,12 +480,12 @@ METRICAS_EXTRAIBLES: dict[str, MetricaInfo] = {
 # ---------------------------------------------------------------------------
 # 1c. Cruces determinísticos (Fase B) — declaraciones puras, sin lógica.
 #
-# El catálogo de 20 KPIFormula de abajo es cerrado por diseño (ver docstring
+# El catálogo de 21 KPIFormula de abajo es cerrado por diseño (ver docstring
 # del módulo): cada fórmula corresponde 1:1 a la tabla del Miro. Pero eso
 # significa que ningún cruce entre variables de hojas distintas existe
 # aunque ambas estén cargadas con serie histórica alineada — ej.
 # monto_cobrado ÷ pacientes_atendidos_periodo (ingreso por paciente
-# atendido) no es ninguno de los 20 KPIs y hoy es invisible.
+# atendido) no es ninguno de los 21 KPIs y hoy es invisible.
 #
 # `cruces.py` (módulo aparte, NO este archivo) usa estas dos declaraciones
 # para generar esos cruces sin que el modelo invente ninguna fórmula:
@@ -556,7 +578,7 @@ def _pct(numerador: float, denominador: float) -> Optional[float]:
 
 
 # ---------------------------------------------------------------------------
-# 2. Las 20 fórmulas — cada una lee del dict de variables normalizadas
+# 2. Las 21 fórmulas — cada una lee del dict de variables normalizadas
 # ---------------------------------------------------------------------------
 
 KPI_FORMULAS: list[KPIFormula] = [
@@ -663,6 +685,16 @@ KPI_FORMULAS: list[KPIFormula] = [
     KPIFormula(20, "Rentabilidad por tratamiento",
                ["ingreso_por_tratamiento", "costo_por_tratamiento", "costo_hora_sillon", "duracion_tratamiento_horas"],
                lambda v: _rentabilidad_por_tratamiento(v), unidad="$"),
+
+    # KPI 21: penetración de reactivación = reactivados / base inactiva
+    # TOTAL. Complementa el KPI 9 (reactivados / contactados = conversión de
+    # la campaña del período): este mide qué % de TODA la base dormida se
+    # recuperó, no sólo de los que se alcanzó a contactar. Mismo patrón que
+    # el KPI 9 (usa _pct, que devuelve None si el denominador es 0).
+    KPIFormula(21, "Penetración de reactivación",
+               ["pacientes_reactivados", "pacientes_inactivos_total"],
+               lambda v: _pct(v["pacientes_reactivados"], v["pacientes_inactivos_total"]),
+               numerador="pacientes_reactivados", denominador="pacientes_inactivos_total"),
 ]
 
 

@@ -12,7 +12,7 @@ una vez por variable, nunca una vez por KPI.
 
 ```
 # Núcleo
-schema.py                    Vocabulario de ~28 variables + las 20 fórmulas de KPIs
+schema.py                    Vocabulario de ~28 variables + las 21 fórmulas de KPIs
 coverage.py                  Chequeo de cobertura por variable + priorización del wizard
 conflictos.py                Resolución de conflictos entre archivos/migraciones
 pipeline.py                  Orquestador: punto de entrada único (procesar_migracion)
@@ -28,7 +28,7 @@ extractors/
 claude_utils.py              Helpers compartidos: extraer_texto (saltea bloques de thinking)
 
 # Cruces y calidad del dato
-cruces.py                    Métricas derivadas fuera de las 20 KPIFormula (embudo + álgebra de unidades)
+cruces.py                    Métricas derivadas fuera de las 21 KPIFormula (embudo + álgebra de unidades)
 cruces_propuestos.py         El modelo propone qué cruzar; nunca calcula el número
 calidad.py                   Data Quality Report: completitud/consistencia/confianza + suficiencia_datos
 agregados.py                 Promedio/mediana/suma sobre una serie ya extraída + detección de outliers
@@ -174,9 +174,10 @@ assert not any(p["variable"] == "no_shows" for p in variables_para_wizard(result
 
 ### Benchmarks argentinos + interpretación del asistente
 
-De los 20 KPIs, 13 se comparan contra un benchmark (los otros 7 son
+De los 21 KPIs, 13 se comparan contra un benchmark (los otros 8 no: 7 son
 financieros/internos, dependen 100% del historial propio — ver
-`SOLO_MIGRACION_O_SISTEMA` e `INTERNAL_VARIABLES` en `schema.py`). El
+`SOLO_MIGRACION_O_SISTEMA` e `INTERNAL_VARIABLES` en `schema.py` —, más el
+KPI 21, que es `sin_benchmark` como el KPI 10). El
 research completo (`referencias/benchmarks_research_AR.md`) encontró que
 **11 de los 13 son proxy internacional**, no dato argentino — el sistema
 tiene que ser honesto sobre eso en cada pantalla y cada respuesta.
@@ -364,7 +365,7 @@ parte de la suite de regresión (es 100% determinista, no llama a Claude).
 
 ## Cruces determinísticos y propuestos (Fases B/C/F)
 
-`cruces.py` calcula métricas fuera de las 20 `KPIFormula` fijas, en dos
+`cruces.py` calcula métricas fuera de las 21 `KPIFormula` fijas, en dos
 capas deterministas sin API: la capa de embudo (toda razón
 etapa-posterior/etapa-anterior es una conversión válida por construcción,
 vía `ETAPAS_EMBUDO`) y la capa de álgebra de unidades (análisis dimensional

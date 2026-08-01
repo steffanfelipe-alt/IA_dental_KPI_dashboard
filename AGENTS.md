@@ -101,13 +101,13 @@ CHECKLIST_PROXIMO.md / PROXIMOS_PASOS_TESTING.md   Notas de trabajo pendiente
 
 ## Flujo de trabajo
 
-- **Trunk-based sin ramas**: los 11 commits del historial son todos sobre `main`, sin merges ni ramas paralelas. No crear feature branches salvo que se pida explícitamente.
+- **Flujo por Pull Request (desde 2026-07-31)**: toda feature entra por una rama → PR a `main`, nunca push directo. `main` está protegida y exige el check de CI `test` en verde antes de mergear. El historial viejo era trunk-based sin ramas; ese modo quedó discontinuado. Detalle completo en `CONTRIBUTING.md`.
 - **Trabajo organizado en "Fases"** (letradas A–I / numeradas 0–8 según el módulo), cada una documentada como sección propia en `parser/README.md` con qué se encontró → qué se corrigió → con qué evidencia real (datos de clínica, no hipotéticos).
 - **Auditar contra el código antes de documentar**: el último commit existe específicamente porque la doc tenía afirmaciones falsas frente al código. No asumir que lo escrito sigue vigente — verificarlo (esta misma generación encontró que `periodo_evaluacion_semanas` ya no queda en `None`).
 
 ## Testing, CI/CD
 
-- **No hay CI** — sin `.github/workflows`, sin `Makefile`, sin `tox.ini`. Todo corre local.
+- **CI en `.github/workflows/ci.yml`** (desde 2026-07-31): cada PR/push a `main` corre `ruff check parser` (informativo, no bloqueante) + los 26 tests offline. El job se llama `test` y es el check requerido para mergear. `tests-api.yml` es manual (`workflow_dispatch`) y corre `parser/evals/runner.py` contra la API real (consume créditos). `release-please.yml` maneja el versionado automático.
 - **363 tests en 26 archivos `test_*.py`** dentro de `parser/`, uno por módulo, **sin pytest**. Cada archivo corre standalone:
   ```
   python3 test_pipeline.py
@@ -119,11 +119,11 @@ CHECKLIST_PROXIMO.md / PROXIMOS_PASOS_TESTING.md   Notas de trabajo pendiente
 
 ## Estilo de commits y PRs
 
-- **No Conventional Commits.** Título en español, imperativo, sin prefijo `feat:`/`fix:` (ej. "Cablear el ledger de pacientes, desbloquear KPI 14 y hacer el sistema explicable").
+- **Conventional Commits obligatorios (desde 2026-07-31)**: prefijo `feat:`/`fix:`/`docs:`/`ci:`/`chore:`… lo exige el flujo y release-please usa el prefijo para versionar. El cuerpo puede seguir en español. El historial viejo usa títulos en español sin prefijo (ej. "Cablear el ledger de pacientes…"); ese estilo quedó atrás.
 - **Cuerpo largo y denso**, un párrafo por módulo/hallazgo tocado, priorizando el PORQUÉ: qué bug motivó el cambio, con qué dato se confirmó, qué se descartó como premisa.
 - **Afirmaciones verificadas, no aspiracionales** — cerrar diciendo qué se verificó ("el conteo de 363 tests coincide con correr la suite ahora mismo").
-- **`Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`** al final.
-- No hay PRs — commit directo a `main`.
+- **Sin atribución de IA** (`Co-Authored-By`) en los commits.
+- **Toda feature vía PR a `main`** — ver la sección "Flujo de trabajo" y `CONTRIBUTING.md`.
 
 ## Skills Reference
 

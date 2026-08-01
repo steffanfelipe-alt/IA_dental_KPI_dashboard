@@ -15,7 +15,7 @@ Contenido de esta entrega:
   argentinos ya cargada (`benchmarks.py` + `aranceles_com.py`), el cruce
   de benchmark + contexto cualitativo (`interpretacion.py`), el motor de
   priorización (`priorizacion.py`), el Diagnostic Engine
-  (`diagnostico.py`), el catálogo de ~35 intervenciones tecnológicas
+  (`diagnostico.py`), el catálogo de ~45 intervenciones tecnológicas
   (`catalogo_tecnologico.py`) y el ledger de pacientes
   (`ledger.py` + `metricas_paciente.py`), entre ~20 módulos más. Ver
   `parser/README.md` para la lista completa (agrupada por función) y las
@@ -69,7 +69,7 @@ la Sección 7 (capa de interpretación y benchmarks) que documenta este flujo.
 - Desde esta entrega se agregaron, y están commiteados y probados:
   motor de cruces determinísticos y propuestos por IA (`cruces.py` +
   `cruces_propuestos.py`), Diagnostic Engine (`diagnostico.py`), catálogo
-  de ~35 intervenciones tecnológicas priorizadas (`catalogo_tecnologico.py`),
+  de ~45 intervenciones tecnológicas priorizadas (`catalogo_tecnologico.py`),
   ledger de pacientes con 17 métricas longitudinales
   (`ledger.py` + `metricas_paciente.py`), y una capa que traduce los
   motivos técnicos de rechazo de datos a lenguaje de dueño de clínica

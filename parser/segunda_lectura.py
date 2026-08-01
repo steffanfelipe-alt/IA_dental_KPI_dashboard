@@ -38,7 +38,7 @@ from typing import Any, Optional
 
 from schema import METRICAS
 from coverage import VariableValue
-from claude_utils import extraer_texto
+from claude_utils import extraer_json
 
 try:
     import anthropic
@@ -98,10 +98,7 @@ def pedir_segunda_lectura(
             "content": json.dumps({"grid": grid, "variables": definiciones}, ensure_ascii=False, default=str),
         }],
     )
-    texto = extraer_texto(respuesta).strip()
-    if texto.startswith("```"):
-        texto = texto.split("```")[1].removeprefix("json").strip()
-    payload = json.loads(texto)
+    payload = extraer_json(respuesta)
     return {item["variable"]: item for item in payload.get("lecturas", []) if "variable" in item}
 
 

@@ -4,6 +4,8 @@ claude_utils.py
 Helpers compartidos para leer respuestas de la API de Claude.
 """
 
+import json
+
 
 def respuesta_truncada(respuesta) -> bool:
     """¿La respuesta se cortó por `max_tokens` en vez de terminar sola?
@@ -45,3 +47,60 @@ def extraer_texto(respuesta) -> str:
         f"La respuesta de Claude no tiene ningún bloque de texto "
         f"(stop_reason={respuesta.stop_reason!r})."
     )
+
+
+def extraer_json(respuesta) -> dict:
+    """
+    Parsea el JSON de una respuesta de Claude que se pidió como "SOLO JSON,
+    sin texto adicional".
+
+    Bug real que motiva esto: vision_parser.parsear_imagen asumía que el
+    texto entero era ```texto.split("```")[1]``` — un fence ÚNICO que
+    arranca en el carácter 0. Con una foto ambigua (letra manuscrita,
+    números dudosos) Claude a veces antepone una aclaración antes del
+    bloque ("no puedo leer bien un valor, pero mi mejor lectura es:"), o
+    no cierra el fence. Ninguno de los dos casos es "el modelo no
+    cumplió la instrucción" en un sentido grave — es variación normal de
+    un LLM — pero el parseo viejo no toleraba ninguno y explotaba con
+    `JSONDecodeError: Expecting value: line 1 column 1 (char 0)`, un
+    error que no dice nada de lo que realmente contestó Claude.
+
+    Estrategia, en orden: (1) si hay un fence ``` ```, usar el contenido
+    entre el primer y el segundo (o hasta el final si no cierra) en vez
+    de exigir que el string entero sea el fence; (2) sacar un prefijo
+    "json" si quedó pegado; (3) dentro de ese candidato, recortar entre
+    la primera '{' y la última '}' — así un preámbulo o un cierre en
+    prosa alrededor del JSON no rompen el parseo. Si después de todo eso
+    no hay JSON válido, se levanta ValueError con un recorte del texto
+    crudo: el objetivo es que el próximo fallo de este tipo diga QUÉ
+    contestó Claude, no un JSONDecodeError pelado sin contexto.
+    """
+    texto = extraer_texto(respuesta).strip()
+    candidato = texto
+
+    if "```" in candidato:
+        partes = candidato.split("```")
+        candidato = partes[1] if len(partes) > 1 else partes[0]
+        candidato = candidato.strip()
+        if candidato[:4].lower() == "json":
+            candidato = candidato[4:]
+        candidato = candidato.strip()
+
+    inicio = candidato.find("{")
+    fin = candidato.rfind("}")
+
+    if inicio == -1 or fin == -1 or fin < inicio:
+        raise ValueError(
+            "No encontré un objeto JSON en la respuesta de Claude. "
+            f"Texto crudo recibido (recortado): {texto[:500]!r}"
+        )
+
+    candidato = candidato[inicio:fin + 1]
+
+    try:
+        return json.loads(candidato)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"La respuesta de Claude no es JSON válido ({e}). "
+            f"Texto crudo recibido (recortado): {texto[:500]!r}"
+        ) from e

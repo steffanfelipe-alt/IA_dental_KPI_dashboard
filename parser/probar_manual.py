@@ -204,6 +204,14 @@ if st.button("Procesar migración", type="primary"):
 resultado = st.session_state.resultado_migracion
 
 if resultado:
+    # Archivos que el extractor no pudo procesar (excepción atrapada en
+    # pipeline.procesar_migracion) — se muestran primero y sin expander:
+    # que un documento falle no puede pasar desapercibido, el resto de la
+    # migración sigue mostrándose igual con lo que sí se pudo extraer.
+    if resultado.get("archivos_fallidos"):
+        for fallo in resultado["archivos_fallidos"]:
+            st.error(f"No se pudo procesar **{fallo['archivo']}**: {fallo['error']}")
+
     st.subheader("2. KPIs calculados")
     if resultado["kpis_calculados"]:
         filas = [
@@ -677,9 +685,9 @@ if resultado:
         st.caption("Todavía no hay ningún KPI calculado para interpretar.")
 
     st.divider()
-    st.subheader("9. Cruces determinísticos (fuera del catálogo de 20 KPIs)")
+    st.subheader("9. Cruces determinísticos (fuera del catálogo de 21 KPIs)")
     st.caption(
-        "cruces.py (Fase B): métricas que ninguna de las 20 KPIFormula fijas calcula, "
+        "cruces.py (Fase B): métricas que ninguna de las 21 KPIFormula fijas calcula, "
         "generadas de dos formas, ambas sin llamar a la API — nunca mezcladas con la "
         "sección 2 de arriba, porque un cruce no tiene benchmark ni kpi_id."
     )
@@ -762,7 +770,7 @@ if resultado:
 
     st.subheader("10. Métricas de paciente (ledger_pacientes)")
     st.caption(
-        "metricas_paciente.py (Fase H4c): 17 métricas longitudinales que las 20 KPIFormula "
+        "metricas_paciente.py (Fase H4c): 17 métricas longitudinales que las 21 KPIFormula "
         "fijas no pueden expresar (necesitan historial por paciente, no un agregado "
         "mensual) — determinístico, sin API. Sección separada a propósito, mismo criterio "
         "que la 9: contrato distinto, nunca mezclado con los KPIs de arriba."

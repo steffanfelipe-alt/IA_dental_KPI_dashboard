@@ -51,7 +51,7 @@ import pandas as pd
 
 from schema import KPI_FORMULAS, METRICAS, METRICAS_EXTRAIBLES, VARIABLE_TYPES
 from coverage import VariableValue
-from claude_utils import extraer_texto
+from claude_utils import extraer_json
 from trazabilidad import Trazabilidad
 from matching import RegistroClientes, encontrar_o_crear_cliente
 from ledger import TIPOS_EVENTO, construir_ledger_pacientes
@@ -439,10 +439,7 @@ def pedir_mapeo_a_claude(hojas_crudas: list[dict], client) -> dict:
             "content": json.dumps({"hojas": hojas_crudas}, ensure_ascii=False, default=str),
         }],
     )
-    texto = extraer_texto(respuesta).strip()
-    if texto.startswith("```"):
-        texto = texto.split("```")[1].removeprefix("json").strip()
-    return json.loads(texto)
+    return extraer_json(respuesta)
 
 
 def _releer_con_encabezado(path: str, hoja: Optional[str], fila_encabezado: int) -> pd.DataFrame:

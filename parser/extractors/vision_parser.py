@@ -19,7 +19,7 @@ from typing import Optional
 
 from schema import VARIABLE_TYPES
 from coverage import VariableValue
-from claude_utils import extraer_texto
+from claude_utils import extraer_json
 
 try:
     import anthropic
@@ -105,10 +105,7 @@ def parsear_imagen(path: str, client: Optional["anthropic.Anthropic"] = None) ->
         }],
     )
 
-    texto = extraer_texto(respuesta).strip()
-    if texto.startswith("```"):
-        texto = texto.split("```")[1].removeprefix("json").strip()
-    payload = json.loads(texto)
+    payload = extraer_json(respuesta)
 
     variables: dict[str, VariableValue] = {}
     for item in payload.get("variables_encontradas", []):
@@ -162,10 +159,7 @@ def parsear_pdf(path: str, client: Optional["anthropic.Anthropic"] = None) -> di
         }],
     )
 
-    texto = extraer_texto(respuesta).strip()
-    if texto.startswith("```"):
-        texto = texto.split("```")[1].removeprefix("json").strip()
-    payload = json.loads(texto)
+    payload = extraer_json(respuesta)
 
     variables: dict[str, VariableValue] = {}
     for item in payload.get("variables_encontradas", []):

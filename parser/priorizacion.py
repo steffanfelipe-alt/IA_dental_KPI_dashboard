@@ -13,12 +13,12 @@ consultora argentina.
 número que decide quien llama a este módulo — ese criterio de negocio
 vive en el diseño del Miro, no se recalcula acá.
 
-TODO: los KPIs `sin_benchmark` (7, 10, 19) no tienen `magnitud_pct` (no
+TODO: los KPIs `sin_benchmark` (1, 7, 10, 19) no tienen `magnitud_pct` (no
 hay rango contra el cual medir un gap), así que hoy su score siempre da 0
 y nunca entran al top-3 por esta vía — el plan dice que esos se priorizan
 "por tendencia propia", pero calcular un score numérico a partir de la
 serie histórica (¿mejoró/empeoró, y cuánto?) es una extensión que este
-plan no especificó en fórmula. Hasta entonces, esos 3 KPIs se priorizan
+plan no especificó en fórmula. Hasta entonces, esos 4 KPIs se priorizan
 manualmente / vía la interpretación cualitativa (interpretacion.py), no
 por este ranking.
 """

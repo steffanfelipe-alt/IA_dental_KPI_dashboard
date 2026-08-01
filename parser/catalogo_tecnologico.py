@@ -14,9 +14,11 @@ etapa correspondiente da las intervenciones candidatas sin traducción.
 
 1. **`tipo`** (proceso | automatizacion | ia): el §14 exige poder
    recomendar un cambio de protocolo en vez de tecnología. El catálogo
-   v2 ya incluye 3 alternativas de proceso (🅿️) con su propia debilidad
-   documentada en `durabilidad` — condición cero, pero depende de que un
-   humano no falle.
+   ya incluye 9 alternativas de proceso (🅿️), repartidas en las 4 etapas
+   que antes no tenían ninguna (captación, conversión, consulta,
+   post_consulta), cada una con su propia debilidad documentada en
+   `durabilidad` — condición cero, pero depende de que un humano no
+   falle.
 2. **`periodo_evaluacion_semanas`**: NO se completa acá — es el único
    campo que sigue pendiente del usuario (cuántas semanas antes de medir
    si una intervención movió el KPI). Queda en `None` hasta confirmarlo.
@@ -143,6 +145,51 @@ INTERVENCIONES: list[Intervencion] = [
         como_funciona="Detecta cuando alguien empezó a llenar el formulario de la web y no lo terminó, y le manda un mensaje de seguimiento.",
         beneficio="Recupera leads que ya mostraron interés y se perdieron en el camino — no es un problema de primer contacto, es de conversión.",
     ),
+    Intervencion(
+        "meta_ads_captacion", "captacion", "Meta Ads (Instagram/Facebook)", "ia",
+        "Costo de adquisición vs. reactivación", kpi_objetivo=19,
+        kpis_secundarios=(1,),
+        condicion="Acceso a Meta Business Manager + cuenta publicitaria con historial",
+        requiere_integracion=True,
+        como_funciona="Corre campañas pagas en Instagram/Facebook con segmentación y creatividades optimizadas automáticamente (Advantage+) según qué público y qué aviso convierten mejor, en vez de un aviso fijo para todos.",
+        beneficio="Baja el costo por lead nuevo porque el gasto se redirige solo hacia el público que efectivamente agenda, y de paso mete volumen adicional de consultas que hoy no llegan por ningún canal orgánico.",
+    ),
+    Intervencion(
+        "google_ads_captacion", "captacion", "Google Ads (búsqueda)", "automatizacion",
+        "Costo de adquisición vs. reactivación", kpi_objetivo=19,
+        kpis_secundarios=(1,),
+        condicion="Cuenta de Google Ads + presupuesto mensual asignado",
+        requiere_integracion=True,
+        como_funciona="Pone a la clínica arriba de los resultados de búsqueda para términos de alta intención (ej. \"implante dental cerca\"), con pujas ajustadas por conversión real y no solo por clic.",
+        beneficio="Capta gente que ya está buscando activamente un tratamiento — el costo por consulta nueva es más controlable que en un canal de descubrimiento pasivo como redes.",
+    ),
+    Intervencion(
+        "seo_organico_captacion", "captacion", "SEO (posicionamiento orgánico en Google)", "automatizacion",
+        "Consultas nuevas / mes", kpi_objetivo=1,
+        kpis_secundarios=(19,),
+        condicion="Sitio web propio + acceso de administrador para optimizarlo",
+        requiere_integracion=True,
+        como_funciona="Optimiza la ficha técnica del sitio (velocidad, estructura, contenido por tratamiento) para que aparezca en los primeros resultados orgánicos de Google, sin pagar por clic.",
+        beneficio="Suma consultas nuevas de forma sostenida sin costo por lead — a diferencia de un canal pago, el tráfico orgánico no se corta si baja el presupuesto de un mes al otro.",
+    ),
+    Intervencion(
+        "referidos_organicos_gbp", "captacion", "Referidos orgánicos / Google Business Profile", "automatizacion",
+        "Consultas nuevas / mes", kpi_objetivo=1,
+        kpis_secundarios=(19,),
+        condicion="Perfil de Google Business Profile reclamado y verificado",
+        requiere_integracion=True,
+        como_funciona="Optimiza y mantiene activo el perfil de Google Business (fotos, horarios, categorías, respuesta a reseñas) para que la clínica aparezca en el mapa y en las búsquedas locales con intención de agendar.",
+        beneficio="El perfil de Google es lo primero que ve alguien que busca \"dentista cerca\" — mantenerlo completo y con reseñas activas convierte esa búsqueda local en consultas nuevas sin pagar por cada una.",
+    ),
+    Intervencion(
+        "proceso_preguntar_como_nos_conocio", "captacion", "Preguntar \"¿cómo nos conociste?\" en cada primer contacto (sin sistema)", "proceso",
+        "Consultas nuevas / mes (atribución por canal)", kpi_objetivo=1,
+        kpis_secundarios=(19,),
+        durabilidad="Depende de que quien atiende el primer contacto lo pregunte y lo anote siempre, sin excepción",
+        requiere_integracion=False,
+        como_funciona="Protocolo escrito: quien atiende el primer mensaje o llamada pregunta \"¿cómo nos encontraste?\" y anota la respuesta en una planilla simple, sin ninguna herramienta de tracking.",
+        beneficio="Cuesta cero implementar y por primera vez da una idea de qué canal trae consultas nuevas — pero se cae apenas alguien se olvida de preguntar o de anotarlo.",
+    ),
 
     # 2. Conversión / Agendamiento
     Intervencion(
@@ -183,6 +230,22 @@ INTERVENCIONES: list[Intervencion] = [
         requiere_integracion=False,
         como_funciona="Manda automáticamente la lista de qué traer (estudios, DNI, orden médica) antes del turno.",
         beneficio="El equipo deja de repetir la misma explicación por teléfono turno tras turno.",
+    ),
+    Intervencion(
+        "proceso_doble_confirmacion_manual", "conversion", "Doble confirmación manual del turno propuesto", "proceso",
+        "Tasa de conversión a turno agendado", kpi_objetivo=3,
+        durabilidad="Depende de que el mismo recepcionista repita la llamada de confirmación al día siguiente, sin saltarla por volumen de trabajo",
+        requiere_integracion=False,
+        como_funciona="Protocolo escrito: cuando se le propone un turno a un lead, recepción llama o escribe de nuevo al día siguiente para confirmar, en vez de darlo por perdido si no responde enseguida.",
+        beneficio="Cuesta cero implementar y recupera algunos leads que dudaban — pero se pierde apenas el equipo está saturado o alguien nuevo no conoce el protocolo.",
+    ),
+    Intervencion(
+        "proceso_guion_objeciones_presupuesto", "conversion", "Guion escrito para objeciones de presupuesto", "proceso",
+        "Tasa de aceptación de presupuestos (indirecta)", kpi_objetivo=5,
+        durabilidad="Depende de que quien presenta el presupuesto siga el guion en vez de responder de forma improvisada",
+        requiere_integracion=False,
+        como_funciona="Protocolo escrito con las objeciones de precio más comunes y la respuesta sugerida (financiación, urgencia del tratamiento, comparación con no tratarlo), para usar antes de que el lead cuelgue.",
+        beneficio="Cuesta cero implementar y mejora la conversión de presupuestos dudosos — pero depende 100% de que cada persona del equipo lo use igual, sin criterio propio.",
     ),
 
     # 3. Confirmación y Pre-consulta
@@ -269,6 +332,22 @@ INTERVENCIONES: list[Intervencion] = [
         como_funciona="Si la agenda se atrasa, avisa automáticamente a los próximos pacientes en vez de que recepción llame uno por uno.",
         beneficio="Menos llamados manuales de recepción, y el paciente llega sabiendo que hay demora en vez de esperar sin información.",
     ),
+    Intervencion(
+        "proceso_checklist_verbal_cuidados", "consulta", "Checklist verbal de cuidados al cierre de la consulta", "proceso",
+        "Horas repetitivas del profesional", kpi_objetivo=15,
+        durabilidad="Depende de que el profesional recorra la lista completa cada vez, sin saltarse ítems por apuro entre turno y turno",
+        requiere_integracion=False,
+        como_funciona="Lista impresa pegada en el consultorio con los cuidados post-tratamiento más comunes; el profesional la recorre de memoria al cierre de cada consulta, sin ficha digital.",
+        beneficio="Cuesta cero implementar — pero se degrada apenas hay apuro entre turnos y algún ítem queda afuera, cosa que con un envío automático no pasa.",
+    ),
+    Intervencion(
+        "proceso_plantilla_papel_presupuesto", "consulta", "Plantilla en papel para armar el presupuesto en el momento", "proceso",
+        "Tasa de aceptación de presupuestos", kpi_objetivo=5,
+        durabilidad="Depende de que el profesional complete la plantilla a mano en cada consulta y no la posponga para \"después\"",
+        requiere_integracion=False,
+        como_funciona="Formulario en papel con los tratamientos y precios más comunes; el profesional lo completa a mano durante la consulta y se lo entrega al paciente ahí mismo.",
+        beneficio="Cuesta cero implementar y da presupuesto en el momento igual que la versión digital — pero se pierde si el profesional lo deja para después y el paciente se va sin número.",
+    ),
 
     # 5. Post-consulta / Seguimiento inmediato
     Intervencion(
@@ -303,6 +382,14 @@ INTERVENCIONES: list[Intervencion] = [
         requiere_integracion=False,
         como_funciona="Responde las preguntas frecuentes de pacientes (horarios, precios generales, cuidados) sin que el equipo tenga que contestar siempre lo mismo.",
         beneficio="Libera tiempo del equipo de las preguntas repetitivas que no necesitan a una persona.",
+    ),
+    Intervencion(
+        "proceso_llamado_48h_seguimiento", "post_consulta", "Llamado manual de seguimiento a las 48 horas", "proceso",
+        "Tasa de finalización / abandono", kpi_objetivo=7,
+        durabilidad="Depende de que alguien del equipo se acuerde de hacer la llamada 48hs después, sin agenda ni recordatorio automático",
+        requiere_integracion=False,
+        como_funciona="Protocolo escrito: alguien del equipo llama al paciente 48hs después de un tratamiento con un guion fijo de tres preguntas (cómo se siente, si tiene dudas, si necesita algo) y anota la respuesta a mano.",
+        beneficio="Cuesta cero implementar y detecta pacientes insatisfechos antes de que abandonen el tratamiento — pero se cae apenas el equipo está sobrecargado y la llamada no se hace a tiempo.",
     ),
 
     # 6. Fidelización y Reactivación

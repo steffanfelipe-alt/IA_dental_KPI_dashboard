@@ -33,7 +33,7 @@ def test_aceptacion_alta_es_favorable():
 
 
 def test_kpis_sin_benchmark_nunca_comparan():
-    for kpi_id in (7, 10, 19):
+    for kpi_id in (1, 7, 10, 19):
         assert BENCHMARKS_AR[kpi_id].confiabilidad == "sin_benchmark"
         gap = calcular_gap(kpi_id, 50)
         assert gap.tiene_benchmark is False

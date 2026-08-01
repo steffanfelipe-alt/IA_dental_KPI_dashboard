@@ -46,6 +46,14 @@ class BenchmarkKPI:
 
 
 BENCHMARKS_AR: dict[int, BenchmarkKPI] = {
+    1: BenchmarkKPI(
+        1, None, None, "conteo", mejor_es="mayor",
+        confiabilidad="sin_benchmark",
+        nota="Consultas nuevas/mes es un conteo crudo, no una tasa: no hay benchmark "
+             "universal posible porque depende 100% del tamaño de la clínica "
+             "(sillones, profesionales, horas de atención). Comparar contra la "
+             "tendencia histórica propia, no contra un número externo.",
+    ),
     2: BenchmarkKPI(
         2, 0, 5, "min", mejor_es="menor",
         fuente="Playmedic / Harvard Business Review (Oldroyd et al., 2011)",

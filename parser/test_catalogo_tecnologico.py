@@ -71,7 +71,7 @@ def test_tipo_condicional_del_catalogo_v1_quedo_partido_en_dos_entradas():
 
 def test_alternativas_de_proceso_declaran_su_debilidad():
     procesos = [i for i in INTERVENCIONES if i.tipo == "proceso"]
-    assert len(procesos) == 3
+    assert len(procesos) == 9
     for p in procesos:
         assert p.durabilidad, f"{p.id}: una alternativa de proceso debería declarar su debilidad conocida"
 
@@ -135,8 +135,8 @@ def test_mapear_oportunidades_incluye_addressability_por_contexto():
 # esperando confirmación del usuario, ahora derivado de `tipo`.
 # ---------------------------------------------------------------------------
 
-def test_las_35_intervenciones_tienen_periodo_de_evaluacion_poblado():
-    assert len(INTERVENCIONES) == 35
+def test_las_45_intervenciones_tienen_periodo_de_evaluacion_poblado():
+    assert len(INTERVENCIONES) == 45
     sin_poblar = [i.id for i in INTERVENCIONES if i.periodo_evaluacion_semanas is None]
     assert sin_poblar == []
 

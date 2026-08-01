@@ -513,27 +513,54 @@ código.
   tomaba el "último período" por orden de aparición en los candidatos, no
   cronológico.
 
+## Catálogo de intervenciones ampliado — procesos sin IA y captación (2026-07-31)
+
+Se encontró: 4 de las 7 etapas del embudo (`captacion`, `conversion`, `consulta`,
+`post_consulta`) no tenían ninguna alternativa `tipo="proceso"` (sin IA) en
+`catalogo_tecnologico.py` — todas sus intervenciones eran tecnológicas. Además, las 4
+intervenciones de `captacion` sólo atendían leads que ya existían; ninguna generaba tráfico
+nuevo (nada de Meta Ads, Google Ads ni SEO). Y el KPI más cercano a "captación" (KPI 1,
+consultas nuevas/mes) no tenía entrada en `BENCHMARKS_AR`.
+
+Se corrigió: 10 intervenciones nuevas (`INTERVENCIONES` pasa de 35 a 45) — 4 de captación
+(Meta Ads y Google Ads ancladas a KPI 19 costo de adquisición con KPI 1 volumen como
+secundario, por ser canales pagos; SEO y Google Business Profile ancladas a KPI 1 con KPI 19
+como secundario, por ser orgánicos) y 6 de proceso sin IA repartidas 1/2/2/1 en
+captación/conversión/consulta/post-consulta. Se agregó KPI 1 a `BENCHMARKS_AR` como
+`sin_benchmark` (mismo patrón que KPI 7/10/19: `rango_bajo`/`rango_alto=None`) — decisión
+explícita de NO inventar un número, porque es un conteo crudo y no hay benchmark universal que
+sirva igual para una clínica chica que para una grande sin normalizar por tamaño.
+
+Con qué evidencia: los 26 `test_*.py` (363 tests) siguen en verde, incluidos los tres asserts
+hardcodeados que dependían del conteo anterior (`test_catalogo_tecnologico.py`:
+intervenciones 35→45, procesos 3→9; `test_benchmarks.py`: tupla `sin_benchmark` `(7,10,19)` →
+`(1,7,10,19)`). Diff acotado: ~122 líneas.
+
 ## Pendiente
 
-**363 tests verdes** al momento de escribir esto (2026-07-30) — el número sigue subiendo
+**363 tests verdes** al momento de escribir esto (2026-07-31) — el número sigue subiendo
 fase a fase, no tomarlo como techo.
 
-### Pendientes reales de la Fase I, frenados por crédito de API
+### Pendientes reales de la Fase I
 
-1. **Terminar I6** — el `SYSTEM_PROMPT` de hojas transaccionales se reforzó para que declarar
-   `columna_periodo` sea imperativo cuando hay columna de fecha (antes era opcional, y sin
-   eso una hoja de 26 meses se sumaba entera en un solo número). Confirmado con
-   `cobros_historico.csv` (26 meses): funcionó. **Falta confirmar con
-   `presupuestos_marzo2026.csv`** (un solo mes) — en la última corrida el modelo no le aplicó
-   el refuerzo a ese archivo particular. Hipótesis sin confirmar: con un solo mes el modelo
-   puede estar razonando "no hay variación que rastrear" y saltándose la instrucción: si se
-   confirma, hace falta un ejemplo explícito de archivo de un solo mes en el prompt.
-2. **La verificación end-to-end final de la Fase I**: correr los 4 archivos reales juntos
-   (Excel + los 2 CSV + la foto) una vez más por la UI y confirmar que ninguna sección se
-   rompió.
-
-Los dos están frenados desde el 2026-07-30 (`anthropic.BadRequestError: Your credit balance
-is too low`) — retomar cuando haya crédito de la API de Anthropic disponible.
+1. **I6 — CONFIRMADO (2026-07-31)**: el `SYSTEM_PROMPT` de hojas transaccionales se reforzó
+   para que declarar `columna_periodo` sea imperativo cuando hay columna de fecha (antes era
+   opcional, y sin eso una hoja de 26 meses se sumaba entera en un solo número). Ya estaba
+   confirmado con `cobros_historico.csv` (26 meses). Se volvió a correr `pedir_mapeo_a_claude`
+   contra `presupuestos_marzo2026.csv` (un solo mes, 57 filas) tras liberarse el crédito de
+   API frenado desde el 2026-07-30: el modelo devolvió `columna_periodo=0` correctamente esta
+   vez (orientación `transaccional` bien detectada). La hipótesis de "un solo mes = sin
+   columna_periodo" **no se reprodujo** — no hizo falta tocar el `SYSTEM_PROMPT`. Queda como
+   nota que el fallo anterior fue no determinístico (variación entre corridas del modelo, sin
+   cambio de código de por medio), no un bug de instrucción.
+2. **La verificación end-to-end final de la Fase I — diferida** (2026-07-31 → retomar
+   mañana): correr archivos reales juntos por la UI de `probar_manual.py` y confirmar que
+   ninguna sección se rompió, incluyendo el catálogo recién ampliado. Se decidió sumar
+   documentos distintos/adicionales a los 4 originales (Excel + los 2 CSV + la foto) para
+   ampliar la cobertura de la verificación, no repetir exactamente la misma corrida. No se
+   automatizó porque `probar_manual.py` necesita las respuestas de la Guía de Diagnóstico
+   como input (juicio de negocio, no algo que el agente deba inventar) además de la carga
+   real de archivos por browser — requiere una pasada manual de Felipe.
 
 ### Hallazgos confirmados con datos reales, sin arreglar todavía
 

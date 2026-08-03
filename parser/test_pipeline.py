@@ -418,6 +418,100 @@ def test_todos_los_archivos_fallan_no_rompe_devuelve_migracion_vacia():
         _restaurar_extractores(original)
 
 
+# ---------------------------------------------------------------------------
+# Bug #2 (E2E): _segunda_lectura_para_variables_dudosas siempre llamaba
+# excel_parser.leer_hojas_crudas(path), que para una foto/PDF explota (no es
+# un archivo de Excel) -> se capturaba en silencio -> la variable de foto
+# quedaba sin segunda lectura para siempre. Ahora se branchea por
+# `fuente == "migracion_foto"` hacia segunda_lectura.pedir_segunda_lectura_imagen.
+# ---------------------------------------------------------------------------
+
+def test_segunda_lectura_de_variable_de_foto_usa_relectura_de_imagen_no_grid_de_excel():
+    original_extractores = dict(pipeline.EXTRACTOR_POR_EXTENSION)
+    llamadas_grid = []
+    llamadas_imagen = []
+
+    def extractor_foto(path, client, registro_clientes=None):
+        return {"no_shows": VariableValue(16, "migracion_foto", 0.5)}, {}
+
+    def leer_hojas_crudas_espia(path):
+        llamadas_grid.append(path)
+        return []
+
+    def pedir_segunda_lectura_imagen_espia(path, variables, client):
+        llamadas_imagen.append((path, variables))
+        return {"no_shows": {"variable": "no_shows", "valor": 16, "confianza": 0.8}}
+
+    pipeline.EXTRACTOR_POR_EXTENSION = {".png": extractor_foto}
+    original_leer_hojas = pipeline.excel_parser.leer_hojas_crudas
+    original_pedir_imagen = pipeline.segunda_lectura.pedir_segunda_lectura_imagen
+    pipeline.excel_parser.leer_hojas_crudas = leer_hojas_crudas_espia
+    pipeline.segunda_lectura.pedir_segunda_lectura_imagen = pedir_segunda_lectura_imagen_espia
+    try:
+        resultado = pipeline.procesar_migracion(["foto.png"], client=object())
+        assert llamadas_imagen == [("foto.png", ["no_shows"])]
+        assert llamadas_grid == [], "una variable migracion_foto no debe pasar por leer_hojas_crudas"
+        assert resultado["variables"]["no_shows"].confianza == 0.7  # 0.5 + 0.2 (coincide)
+    finally:
+        pipeline.EXTRACTOR_POR_EXTENSION = original_extractores
+        pipeline.excel_parser.leer_hojas_crudas = original_leer_hojas
+        pipeline.segunda_lectura.pedir_segunda_lectura_imagen = original_pedir_imagen
+
+
+def test_segunda_lectura_de_foto_que_no_coincide_no_sube_confianza():
+    original_extractores = dict(pipeline.EXTRACTOR_POR_EXTENSION)
+
+    def extractor_foto(path, client, registro_clientes=None):
+        return {"no_shows": VariableValue(57, "migracion_foto", 0.5)}, {}
+
+    def pedir_segunda_lectura_imagen_espia(path, variables, client):
+        # La relectura ciega dice otra cosa — no coincide dentro del 5%.
+        return {"no_shows": {"variable": "no_shows", "valor": 16, "confianza": 0.8}}
+
+    pipeline.EXTRACTOR_POR_EXTENSION = {".png": extractor_foto}
+    original_pedir_imagen = pipeline.segunda_lectura.pedir_segunda_lectura_imagen
+    pipeline.segunda_lectura.pedir_segunda_lectura_imagen = pedir_segunda_lectura_imagen_espia
+    try:
+        resultado = pipeline.procesar_migracion(["foto.png"], client=object())
+        assert resultado["variables"]["no_shows"].confianza == 0.5, "sin coincidencia, la confianza no sube"
+    finally:
+        pipeline.EXTRACTOR_POR_EXTENSION = original_extractores
+        pipeline.segunda_lectura.pedir_segunda_lectura_imagen = original_pedir_imagen
+
+
+def test_segunda_lectura_de_variable_de_planilla_sigue_usando_el_grid_de_excel():
+    # Regresión: separar por fuente no debe hacer que una variable de Excel
+    # empiece a pasar por la relectura de imagen.
+    original_extractores = dict(pipeline.EXTRACTOR_POR_EXTENSION)
+    llamadas_grid = []
+    llamadas_imagen = []
+
+    def extractor_planilla(path, client, registro_clientes=None):
+        return {"no_shows": VariableValue(16, "migracion_excel", 0.5)}, {}
+
+    def leer_hojas_crudas_espia(path):
+        llamadas_grid.append(path)
+        return []  # no hace falta simular un grid real para esta regresión
+
+    def pedir_segunda_lectura_imagen_espia(path, variables, client):
+        llamadas_imagen.append((path, variables))
+        return {}
+
+    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": extractor_planilla}
+    original_leer_hojas = pipeline.excel_parser.leer_hojas_crudas
+    original_pedir_imagen = pipeline.segunda_lectura.pedir_segunda_lectura_imagen
+    pipeline.excel_parser.leer_hojas_crudas = leer_hojas_crudas_espia
+    pipeline.segunda_lectura.pedir_segunda_lectura_imagen = pedir_segunda_lectura_imagen_espia
+    try:
+        pipeline.procesar_migracion(["clinica.xlsx"], client=object())
+        assert llamadas_grid == ["clinica.xlsx"], "el camino de Excel debe seguir llamando a leer_hojas_crudas"
+        assert llamadas_imagen == [], "una variable migracion_excel no debe pasar por la relectura de imagen"
+    finally:
+        pipeline.EXTRACTOR_POR_EXTENSION = original_extractores
+        pipeline.excel_parser.leer_hojas_crudas = original_leer_hojas
+        pipeline.segunda_lectura.pedir_segunda_lectura_imagen = original_pedir_imagen
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

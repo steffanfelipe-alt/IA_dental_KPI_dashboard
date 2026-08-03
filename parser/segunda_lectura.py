@@ -39,6 +39,7 @@ from typing import Any, Optional
 from schema import METRICAS
 from coverage import VariableValue
 from claude_utils import extraer_json
+from extractors import vision_parser
 
 try:
     import anthropic
@@ -100,6 +101,35 @@ def pedir_segunda_lectura(
     )
     payload = extraer_json(respuesta)
     return {item["variable"]: item for item in payload.get("lecturas", []) if "variable" in item}
+
+
+def pedir_segunda_lectura_imagen(
+    path: str, variables: list[str], client: "anthropic.Anthropic",
+) -> dict[str, dict]:
+    """
+    Segunda lectura para variables de origen "migracion_foto" (Bug #2). El
+    "por qué NO renderiza una imagen" del docstring del módulo es sobre NO
+    rasterizar una PLANILLA (ahí el grid sin pérdida es mejor que una
+    imagen) — no aplica acá: el origen YA ES una foto/PDF, no hay grid que
+    perder, así que releerla con visión es la única segunda opinión
+    posible.
+
+    A diferencia de pedir_segunda_lectura (que manda un grid recortado a
+    las variables pedidas), acá se manda la imagen ENTERA de nuevo a
+    vision_parser.parsear_imagen — una relectura ciega, sin contexto del
+    primer mapeo, igual en espíritu a la relectura de Excel. Se descarta
+    todo lo que la relectura encuentre que no sea una de las `variables`
+    pedidas, y se normaliza al mismo contrato {variable: {variable, valor,
+    confianza}} que ya devuelve pedir_segunda_lectura, para que
+    contrastar() no necesite saber de qué fuente vino la segunda lectura.
+    """
+    if not variables:
+        return {}
+    relectura = vision_parser.parsear_imagen(path, client)
+    return {
+        var: {"variable": var, "valor": vv.valor, "confianza": vv.confianza}
+        for var, vv in relectura.items() if var in variables
+    }
 
 
 def contrastar(

@@ -178,17 +178,46 @@ def _segunda_lectura_para_variables_dudosas(
         return variables
 
     archivo_por_nombre = {Path(a).name: a for a in archivos}
-    grids_cache: dict[str, list[dict]] = {}
+    variables = dict(variables)
 
+    # Bug #2 (E2E): una foto/PDF no tiene grid de Excel para releer — antes
+    # SIEMPRE se llamaba excel_parser.leer_hojas_crudas(path) para toda
+    # variable dudosa, que para un PNG/JPG/PDF tira una excepción (no es un
+    # archivo de Excel) -> se capturaba en silencio -> la variable de foto
+    # quedaba sin segunda lectura para siempre. Se separa por
+    # `fuente == "migracion_foto"` ANTES de agrupar por hoja: las de foto
+    # van por pedir_segunda_lectura_imagen (releer la imagen entera con
+    # vision_parser), las de planilla siguen exactamente el camino de
+    # siempre.
+    a_verificar_foto = [v for v in a_verificar if variables[v].fuente == "migracion_foto"]
+    a_verificar_planilla = [v for v in a_verificar if v not in a_verificar_foto]
+
+    por_archivo_foto: dict[str, list[str]] = {}
+    for var in a_verificar_foto:
+        vv = variables[var]
+        if not vv.archivo_origen or vv.archivo_origen not in archivo_por_nombre:
+            continue
+        por_archivo_foto.setdefault(vv.archivo_origen, []).append(var)
+
+    for nombre_archivo, vars_de_foto in por_archivo_foto.items():
+        path = archivo_por_nombre[nombre_archivo]
+        try:
+            lecturas = segunda_lectura.pedir_segunda_lectura_imagen(path, vars_de_foto, client)
+        except Exception:
+            continue
+        confianza_actualizada, _discrepancias = segunda_lectura.contrastar(variables, lecturas)
+        for var, nueva_confianza in confianza_actualizada.items():
+            variables[var] = replace(variables[var], confianza=nueva_confianza)
+
+    grids_cache: dict[str, list[dict]] = {}
     por_hoja: dict[tuple[str, Optional[str]], list[str]] = {}
-    for var in a_verificar:
+    for var in a_verificar_planilla:
         vv = variables[var]
         if not vv.archivo_origen or vv.archivo_origen not in archivo_por_nombre:
             continue
         hoja = vv.fuente.split(":", 1)[1] if ":" in vv.fuente else None
         por_hoja.setdefault((vv.archivo_origen, hoja), []).append(var)
 
-    variables = dict(variables)
     for (nombre_archivo, hoja), vars_de_hoja in por_hoja.items():
         path = archivo_por_nombre[nombre_archivo]
         if path not in grids_cache:

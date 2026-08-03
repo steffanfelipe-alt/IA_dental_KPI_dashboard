@@ -91,7 +91,11 @@ def explicar(vv: "VariableValue") -> str:
     else:
         base = f"{t.valor_final!r} ({_fuente_legible(t)})"
 
-    if t.n_registros is not None and t.n_registros > 1:
+    if t.agregacion == "valor_vigente":
+        # Hallazgo #3: este valor es la celda de un solo período (el
+        # último de la serie), no una agregación de varios registros.
+        base += f" — valor del último período ({vv.periodo})" if vv.periodo else " — valor del último período"
+    elif t.n_registros is not None and t.n_registros > 1:
         base += f" — {t.agregacion} de {t.n_registros} registros"
     if t.filas_excluidas:
         base += f" — excluidas {len(t.filas_excluidas)} fila(s) (ej. TOTAL/Promedio)"

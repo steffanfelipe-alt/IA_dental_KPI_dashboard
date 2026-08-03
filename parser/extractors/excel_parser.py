@@ -918,8 +918,15 @@ def aplicar_mapeo(
             columna=str(col),
             fila=_a_entero(regla.get("fila_index")) if orientacion == "metricas_en_filas" else None,
             condicion=regla.get("condicion"),
-            agregacion=agregacion,
-            n_registros=len(df_filtrado) if hasattr(df_filtrado, "__len__") else None,
+            # Hallazgo #3: cuando hay serie, el valor final es la celda del
+            # ÚLTIMO período (ver rama `elif serie is not None:` arriba) —
+            # NUNCA la agregación de las N filas de `df_filtrado`, que solo
+            # sirvieron para construir la serie histórica completa. Etiquetar
+            # eso como "sum de N registros" mentía sobre la procedencia.
+            agregacion="valor_vigente" if serie is not None else agregacion,
+            n_registros=1 if serie is not None else (
+                len(df_filtrado) if hasattr(df_filtrado, "__len__") else None
+            ),
             filas_excluidas=list(mapeo_hoja.get("filas_excluidas") or []),
             unidad_origen=unidad_origen,
             unidad_final=METRICAS[var].unidad_dato if var in METRICAS else None,

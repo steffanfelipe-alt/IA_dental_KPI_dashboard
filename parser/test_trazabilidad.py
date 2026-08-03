@@ -6,6 +6,12 @@ Cubre la Fase 0 del plan de evolución (lineage): que un valor calculado se
 pueda explicar ("390 min = 6.5 horas × 60, hoja Operativo, fila 3"), que la
 ausencia de traza no rompa nada, y que la traza sobreviva al resto del
 pipeline (conflictos, derivación).
+
+Hallazgo #3 (E2E, fix de etiqueta): cuando `aplicar_mapeo` elige el ÚLTIMO
+período de una serie como "valor vigente", la traza lo etiquetaba como "sum
+de N registros" — mentira, ese valor es UNA sola celda (la del último
+período), no la suma de las N filas que entraron a construir la serie
+completa. El fix es solo de etiqueta: el valor numérico no cambia.
 """
 
 import pandas as pd
@@ -127,6 +133,77 @@ def test_trazabilidad_de_variable_derivada():
 
     texto = explicar(vv)
     assert "16" in texto and "73" in texto
+
+
+def test_valor_de_serie_se_explica_como_ultimo_periodo_no_como_suma_de_registros():
+    # Hallazgo #3: la traza decía "sum de 4 registros" para un valor que en
+    # realidad es SOLO la celda de Abril (102) — las otras 3 filas (Enero,
+    # Febrero, Marzo) nunca se sumaron entre sí, solo sirvieron para armar
+    # la serie histórica de la que se toma el último período.
+    df = pd.DataFrame({
+        "mes": ["Enero 2026", "Febrero 2026", "Marzo 2026", "Abril 2026"],
+        "consultas": [95, 88, 110, 102],
+    })
+    mapeo = {
+        "hoja": "Resumen", "fila_encabezado": 0,
+        "orientacion": "periodos_en_filas", "columna_periodo": 0,
+        "mapeo": [
+            {"columna_index": 1, "variable": "consultas_nuevas_mes", "agregacion": "sum", "confianza": 0.9},
+        ],
+    }
+    variables = aplicar_mapeo(df, mapeo)
+    vv = variables["consultas_nuevas_mes"]
+
+    # El fix es solo de etiqueta: el valor NO debe cambiar.
+    assert vv.valor == 102, f"el valor no debe cambiar por el fix de traza, llegó {vv.valor}"
+    assert vv.trazabilidad.n_registros == 1, (
+        f"un valor de último período es UNA celda, no {vv.trazabilidad.n_registros} registros"
+    )
+    assert vv.trazabilidad.agregacion == "valor_vigente", (
+        f"esperaba agregacion='valor_vigente', llegó {vv.trazabilidad.agregacion!r}"
+    )
+
+    texto = explicar(vv)
+    assert "registros" not in texto, f"no debe mencionar 'registros' para un valor de último período: {texto}"
+    assert "último período" in texto, f"debe decir 'último período': {texto}"
+    assert "2026-04" in texto, f"debe citar el período vigente (2026-04): {texto}"
+
+
+def test_valor_escalar_sin_serie_sigue_diciendo_suma_de_n_registros():
+    # Regresión: una variable SIN columna de período (agregado escalar
+    # normal) debe seguir explicándose como "sum de N registros" — el fix
+    # de #3 es exclusivo de la rama de serie, no debe tocar este camino.
+    df = pd.DataFrame({"no_show": [1, 0, 1, 1]})
+    mapeo = {
+        "hoja": None, "fila_encabezado": 0,
+        "mapeo": [{"columna_index": 0, "variable": "no_shows", "agregacion": "sum", "confianza": 0.9}],
+    }
+    variables = aplicar_mapeo(df, mapeo)
+    vv = variables["no_shows"]
+
+    assert vv.valor == 3.0
+    assert vv.trazabilidad.n_registros == 4, f"esperaba 4 registros (4 filas), llegó {vv.trazabilidad.n_registros}"
+    assert vv.trazabilidad.agregacion == "sum"
+
+    texto = explicar(vv)
+    assert "sum de 4 registros" in texto, f"la rama sin serie debe seguir diciendo 'sum de N registros': {texto}"
+
+
+def test_explicar_renderiza_valor_vigente_sin_periodo_disponible():
+    # Caso borde de trazabilidad.explicar() en aislamiento: si algún día
+    # llega agregacion="valor_vigente" sin vv.periodo seteado (no debería
+    # pasar desde aplicar_mapeo, pero explicar() no debe romper), el texto
+    # sigue diciendo "último período" sin intentar citar un período vacío.
+    from types import SimpleNamespace
+
+    t = Trazabilidad(
+        origen="celda", hoja="Resumen", columna="consultas",
+        agregacion="valor_vigente", n_registros=1, valor_final=102,
+    )
+    vv = SimpleNamespace(valor=102, fuente="migracion_excel", trazabilidad=t, periodo=None)
+    texto = explicar(vv)
+    assert "último período" in texto, f"debe decir 'último período' aun sin vv.periodo: {texto}"
+    assert "registros" not in texto, f"no debe mencionar 'registros': {texto}"
 
 
 if __name__ == "__main__":

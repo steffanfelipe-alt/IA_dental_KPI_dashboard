@@ -69,6 +69,9 @@ VARIABLE_TYPES = {
     # mal mapeado — ver reconciliacion.py).
     "turnos_asistidos": "int",
     "no_shows": "int",
+    # Hallazgo #4 (E2E): distinta de no_shows — acá el paciente AVISA que no
+    # viene (libera el horario para reasignar), no_shows es sin aviso.
+    "turnos_cancelados": "int",
     "presupuestos_emitidos": "int",
     "presupuestos_aceptados": "int",
     "monto_presupuestos_aceptados": "float",       # $ acumulado
@@ -89,6 +92,11 @@ VARIABLE_TYPES = {
     # pacientes_inactivos_contactados, que es sólo los que se contactaron
     # este período — ver `no_confundir_con` en METRICAS.
     "pacientes_inactivos_total": "int",
+    # Hallazgo #4 (E2E): STOCK — la foto de cuántos pacientes están activos
+    # hoy, no un flujo del período. No confundir con pacientes_atendidos_periodo
+    # (ver METRICAS abajo) ni entra a DENOMINADORES_VOLUMEN, igual que la
+    # contraparte inactiva de arriba.
+    "pacientes_activos_cartera": "int",
     "pacientes_atendidos_periodo": "int",
     "resenas_nuevas": "int",
     "referidos_nuevos": "int",
@@ -217,6 +225,19 @@ METRICAS: dict[str, MetricaInfo] = {
             "NO el conteo. Mapear esa columna acá es el error más común."
         ),
     ),
+    "turnos_cancelados": MetricaInfo(
+        "Turnos cancelados",
+        "Cantidad de turnos agendados que el paciente CANCELÓ con aviso previo "
+        "(no simplemente faltó sin avisar). Un CONTEO de turnos, nunca un "
+        "porcentaje. Siempre <= turnos_agendados.",
+        "conteo",
+        sinonimos=["cancelaciones", "turnos cancelados", "canceló"],
+        no_confundir_con=(
+            "no_shows (ausencia SIN aviso — el paciente no cancela, simplemente "
+            "no viene; una cancelación con aviso libera el horario para "
+            "reasignar, un no-show lo pierde)"
+        ),
+    ),
     "presupuestos_emitidos": MetricaInfo(
         "Presupuestos emitidos",
         "Cantidad de presupuestos/planes de tratamiento que la clínica le "
@@ -296,6 +317,20 @@ METRICAS: dict[str, MetricaInfo] = {
             "pacientes_inactivos_contactados (ese es sólo los inactivos que la "
             "clínica CONTACTÓ este período; este es la base inactiva TOTAL, un "
             "stock que no depende de la campaña del mes)"
+        ),
+    ),
+    "pacientes_activos_cartera": MetricaInfo(
+        "Pacientes activos en cartera",
+        "Cantidad de pacientes de la base que están ACTIVOS hoy (vinieron en "
+        "los últimos ~12 meses) — la foto vigente de la cartera activa, un "
+        "STOCK, no un conteo de actividad del período.",
+        "conteo",
+        sinonimos=["pacientes activos", "cartera activa", "base activa"],
+        no_confundir_con=(
+            "pacientes_atendidos_periodo (ese es un FLUJO — cuántos pacientes "
+            "distintos se atendieron en el período; este es un STOCK — la foto "
+            "de cuántos están activos hoy, un paciente reactivado o nuevo puede "
+            "figurar en uno sin figurar todavía en el otro)"
         ),
     ),
     "pacientes_atendidos_periodo": MetricaInfo(

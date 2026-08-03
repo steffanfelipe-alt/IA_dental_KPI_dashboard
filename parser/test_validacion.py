@@ -75,6 +75,35 @@ def test_todas_las_identidades_referencian_variables_reales():
         assert mayor in VARIABLE_TYPES, mayor
 
 
+def test_turnos_cancelados_no_puede_superar_turnos_agendados():
+    # Hallazgo #4: una cancelación presupone un turno agendado —
+    # cancelados > agendados (fuera de tolerancia) es un mapeo mal hecho.
+    violaciones = validar_identidades({"turnos_cancelados": 40, "turnos_agendados": 20})
+    assert any(v.variable == "turnos_cancelados" for v in violaciones)
+
+
+def test_turnos_cancelados_dentro_de_tolerancia_no_se_marca():
+    assert validar_identidades({"turnos_cancelados": 18, "turnos_agendados": 19}) == []
+
+
+def test_pacientes_activos_cartera_no_tiene_identidad_forzada_contra_atendidos():
+    # Hallazgo #4 (diseño): stock (cartera activa) vs flujo (atendidos en el
+    # período) puede invertirse legítimamente — un paciente reactivado o
+    # nuevo se atiende este período sin figurar todavía en la foto de
+    # cartera. Forzar la identidad generaría cuarentenas falsas, por eso NO
+    # hay entrada en IDENTIDADES para este par.
+    assert not any(
+        {"pacientes_activos_cartera", "pacientes_atendidos_periodo"} == {menor, mayor}
+        for menor, mayor in IDENTIDADES
+    )
+    # Con atendidos > cartera (caso legítimo descripto arriba), no debe
+    # haber ninguna violación relacionada a pacientes_activos_cartera.
+    violaciones = validar_identidades({
+        "pacientes_activos_cartera": 1180, "pacientes_atendidos_periodo": 1300,
+    })
+    assert not any(v.variable == "pacientes_activos_cartera" for v in violaciones)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

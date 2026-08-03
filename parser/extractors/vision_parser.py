@@ -59,11 +59,23 @@ Reglas:
   devolvé tu mejor lectura pero con confianza baja (0.3-0.5).
 - Si la imagen no tiene nada relevante a estas variables, devolvé un mapeo
   vacío — no inventes datos.
+- Anclaje de fila (crítico — una planilla con muchas filas es fácil de leer
+  un renglón corrida): antes de reportar un valor, fijate en qué fila está
+  literalmente impreso o escrito, y devolvé en "etiqueta_fila" el texto de
+  la etiqueta que está en esa misma fila (mismo renglón), no la de la fila
+  de arriba o abajo. Un corrimiento vertical de una sola fila (ej. leer el
+  valor de "reactivados" en la fila de "inactivos_contactados") es el error
+  más común y el más difícil de notar — verificá explícitamente que el
+  valor y su etiqueta compartan renglón antes de reportarlos. Si hay
+  CUALQUIER duda de a qué fila pertenece un valor, devolvé igual tu mejor
+  lectura pero con confianza baja (0.3-0.5) y explicá la duda en "nota" —
+  no reportes confianza alta cuando la alineación de fila es dudosa.
 - Devolvé SOLO JSON, sin texto adicional:
 
 {{
   "variables_encontradas": [
     {{"variable": "...", "valor": <número o valor>, "confianza": 0.0-1.0,
+      "etiqueta_fila": "el texto de la etiqueta que está en la MISMA fila que este valor",
       "nota": "de dónde salió este número en la imagen"}}
   ],
   "descripcion_imagen": "1 línea de qué tipo de documento es"

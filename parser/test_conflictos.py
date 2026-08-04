@@ -410,6 +410,30 @@ def test_candidato_con_serie_trae_serie_completa_y_periodo_vigente():
         assert "periodo_vigente" in c
 
 
+def test_candidato_de_conflicto_muestra_el_valor_vigente_no_el_periodo_en_conflicto():
+    """Bug encontrado por Felipe probando E2E: dos fuentes con serie
+    multi-período que discrepan en un período NO vigente. El candidato
+    mostraba el valor del PRIMER período en conflicto (Abril) mientras su
+    propia traza describía el vigente (Mayo) — dos números que se
+    contradecían en pantalla. El candidato debe mostrar el valor vigente,
+    consistente con la traza; la serie de abajo desempata."""
+    serie_a = {"2026-04": 5504553, "2026-05": 8613698}
+    serie_b = {"2026-04": 11524000, "2026-05": 13575000}
+    fuentes = [
+        {"monto_presupuestos_emitidos": VariableValue(
+            8613698, "migracion_excel:A", 0.8, archivo_origen="a.csv",
+            serie=serie_a, periodo="2026-05")},
+        {"monto_presupuestos_emitidos": VariableValue(
+            13575000, "migracion_excel:B", 0.8, archivo_origen="b.xlsx",
+            serie=serie_b, periodo="2026-05")},
+    ]
+    _, conflictos = resolver_conflictos(fuentes)
+    assert len(conflictos) == 1
+    valores = {c["valor"] for c in conflictos[0].candidatos}
+    # El vigente (Mayo), NO el período en conflicto (Abril: 5504553 / 11524000).
+    assert valores == {8613698, 13575000}
+
+
 def test_vigente_es_cronologico_no_por_orden_de_aparicion():
     """Fase I8: bug real encontrado leyendo el código. Si el candidato con
     jul-dic se procesa ANTES que el de ene-jun, el vigente resultante

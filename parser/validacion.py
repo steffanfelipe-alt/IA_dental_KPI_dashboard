@@ -89,6 +89,11 @@ def validar_variable(var: str, valor: Any, fuente: str) -> Optional[str]:
 IDENTIDADES: list[tuple[str, str]] = [
     ("presupuestos_aceptados", "presupuestos_emitidos"),
     ("no_shows", "turnos_agendados"),
+    # Hallazgo #4: una cancelación presupone un turno agendado.
+    # `pacientes_activos_cartera` (stock) NO tiene una pareja acá a propósito
+    # — ver schema.py: puede legítimamente invertirse contra el flujo
+    # pacientes_atendidos_periodo, forzarlo generaría cuarentenas falsas.
+    ("turnos_cancelados", "turnos_agendados"),
     ("turnos_agendados", "consultas_nuevas_mes"),
     ("monto_cobrado", "monto_facturado"),
     ("tratamientos_completados", "tratamientos_iniciados"),

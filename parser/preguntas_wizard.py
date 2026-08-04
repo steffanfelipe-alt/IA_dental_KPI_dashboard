@@ -50,6 +50,12 @@ PREGUNTAS_WIZARD: dict[str, PreguntaWizard] = {
         "De esos, ¿cuántos terminan siendo no-show o cancelación de último momento?",
         "number", "P3", adaptada=True),
 
+    "turnos_cancelados": PreguntaWizard(
+        "turnos_cancelados",
+        "Y de esos que faltan, ¿cuántos avisan que cancelan (a diferencia de los que "
+        "simplemente no aparecen)?",
+        "number", "P3", adaptada=True),
+
     "presupuestos_emitidos": PreguntaWizard(
         "presupuestos_emitidos",
         "¿Cuántos presupuestos arman por mes, aproximadamente?",
@@ -104,6 +110,11 @@ PREGUNTAS_WIZARD: dict[str, PreguntaWizard] = {
     "pacientes_inactivos_total": PreguntaWizard(
         "pacientes_inactivos_total",
         "¿Cuántos pacientes tenés hoy inactivos en total — que hace más de un año que no vienen?",
+        "number", "P43", adaptada=True),
+
+    "pacientes_activos_cartera": PreguntaWizard(
+        "pacientes_activos_cartera",
+        "¿Cuántos pacientes tenés hoy activos en total — que vinieron en el último año?",
         "number", "P43", adaptada=True),
 
     "pacientes_atendidos_periodo": PreguntaWizard(

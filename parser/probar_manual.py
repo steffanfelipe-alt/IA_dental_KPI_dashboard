@@ -39,6 +39,7 @@ from parser.interpretacion.interpretacion import interpretar_clinica, interpreta
 from parser.catalogo.cruces_propuestos import proponer_cruces
 from parser.vocabulario.formato import fmt_ars, fmt_por_unidad
 from parser.vocabulario.schema import KPI_BY_ID
+from parser.vocabulario.puerto_llm import AdaptadorAnthropic
 from parser.interpretacion.explicaciones import explicar_cuarentena, explicar_derivada, explicar_discrepancia, nombre_humano
 
 try:
@@ -97,6 +98,12 @@ if not api_key or anthropic is None:
     st.stop()
 
 client = anthropic.Anthropic(api_key=api_key)
+# Camino de extracción (Strategy + Adapter, scope de este refactor): sólo
+# pipeline.procesar_migracion (y lo que reenvía a extraer_archivo /
+# segunda_lectura) habla contra PuertoLLM. Las secciones 8/9 de más abajo
+# (interpretacion.py, cruces_propuestos.py) siguen recibiendo el `client`
+# crudo — streaming y fuera de scope de este cambio.
+puerto_llm = AdaptadorAnthropic(client)
 
 if "resultado_migracion" not in st.session_state:
     st.session_state.resultado_migracion = None
@@ -193,7 +200,7 @@ if st.button("Procesar migración", type="primary"):
         try:
             st.session_state.resultado_migracion = procesar_migracion(
                 paths_temporales,
-                client=client,
+                puerto_llm=puerto_llm,
                 # None (no {}) cuando no se cargó ninguna: pipeline distingue
                 # "el dueño no contestó nada" de "contestó y no dijo nada".
                 respuestas_diagnostico=respuestas or None,

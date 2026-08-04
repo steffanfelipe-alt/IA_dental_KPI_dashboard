@@ -51,17 +51,12 @@ import pandas as pd
 
 from parser.vocabulario.schema import KPI_FORMULAS, METRICAS, METRICAS_EXTRAIBLES, VARIABLE_TYPES
 from parser.cobertura_calidad.coverage import VariableValue
-from parser.vocabulario.claude_utils import extraer_json
+from parser.vocabulario.claude_utils import extraer_json_de_texto
 from parser.cobertura_calidad.trazabilidad import Trazabilidad
 from parser.pacientes.matching import RegistroClientes, encontrar_o_crear_cliente
 from parser.pacientes.ledger import TIPOS_EVENTO, construir_ledger_pacientes
 from parser.vocabulario import periodos
-
-try:
-    import anthropic
-except ImportError:  # pragma: no cover
-    anthropic = None
-
+from parser.vocabulario.puerto_llm import AdaptadorAnthropic, PuertoLLM
 
 MODEL = "claude-sonnet-5"
 FILAS_PREVIEW = 10
@@ -428,8 +423,8 @@ def leer_formatos_columna(path: str, filas_muestra: int = 30) -> dict[str, dict[
     return resultado
 
 
-def pedir_mapeo_a_claude(hojas_crudas: list[dict], client) -> dict:
-    respuesta = client.messages.create(
+def pedir_mapeo_a_claude(hojas_crudas: list[dict], puerto_llm: PuertoLLM) -> dict:
+    texto = puerto_llm.preguntar(
         model=MODEL,
         max_tokens=8000,
         thinking={"type": "disabled"},
@@ -439,7 +434,7 @@ def pedir_mapeo_a_claude(hojas_crudas: list[dict], client) -> dict:
             "content": json.dumps({"hojas": hojas_crudas}, ensure_ascii=False, default=str),
         }],
     )
-    return extraer_json(respuesta)
+    return extraer_json_de_texto(texto)
 
 
 def _releer_con_encabezado(path: str, hoja: Optional[str], fila_encabezado: int) -> pd.DataFrame:
@@ -1014,7 +1009,7 @@ def _fusionar_ledger(existente: Optional[dict], nuevo: dict) -> dict:
 
 
 def parsear_excel(
-    path: str, client: Optional["anthropic.Anthropic"] = None,
+    path: str, puerto_llm: Optional[PuertoLLM] = None,
     registro_clientes: Optional[RegistroClientes] = None,
 ) -> tuple[dict[str, VariableValue], dict[int, TasaDeclarada]]:
     """Devuelve (variables, tasas_declaradas) — ver reconciliacion.py para
@@ -1024,12 +1019,11 @@ def parsear_excel(
     de todos los archivos de una migración (ver pipeline.procesar_migracion)
     para que "Juan Pérez" en un archivo y "J. Perez" en otro resuelvan al
     mismo paciente en vez de crear dos identidades distintas."""
-    if client is None:
-        assert anthropic is not None, "Instalar el SDK: pip install anthropic --break-system-packages"
-        client = anthropic.Anthropic()
+    if puerto_llm is None:
+        puerto_llm = AdaptadorAnthropic()
 
     hojas_crudas = leer_hojas_crudas(path)
-    respuesta = pedir_mapeo_a_claude(hojas_crudas, client)
+    respuesta = pedir_mapeo_a_claude(hojas_crudas, puerto_llm)
     formatos_por_hoja = {h.get("hoja"): h.get("formatos_columna") or {} for h in hojas_crudas}
 
     variables: dict[str, VariableValue] = {}

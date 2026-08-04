@@ -1,15 +1,14 @@
 """
 test_segunda_lectura.py
 
-Sin pytest, sin API real (cliente mockeado con un objeto simple que imita
-la forma de una respuesta de Anthropic): corre con
-`python -m parser.extraccion.test_segunda_lectura`.
+Sin pytest, sin API real (PuertoLLM falso: un objeto simple con
+`.preguntar(...)` que devuelve el texto ya armado, sin pasar por
+anthropic.Anthropic): corre con `python -m parser.extraccion.test_segunda_lectura`.
 """
 
 import json
 import tempfile
 from pathlib import Path
-from types import SimpleNamespace
 
 from parser.cobertura_calidad.coverage import VariableValue
 from parser.extraccion.segunda_lectura import (
@@ -35,31 +34,28 @@ def test_umbral_confianza_baja_es_07():
     assert UMBRAL_CONFIANZA_BAJA == 0.7
 
 
-class _RespuestaFalsa:
+class _PuertoLLMFalso:
+    """Fake de PuertoLLM: .preguntar(...) devuelve directamente el texto
+    (JSON serializado) que segunda_lectura espera, sin pasar por
+    anthropic.Anthropic ni por client.messages.create."""
+
     def __init__(self, payload: dict):
-        self.content = [SimpleNamespace(type="text", text=json.dumps(payload))]
-        self.stop_reason = "end_turn"
+        self._texto = json.dumps(payload)
 
-
-class _ClienteFalso:
-    def __init__(self, payload: dict):
-        self._payload = payload
-        self.messages = SimpleNamespace(create=self._create)
-
-    def _create(self, **kwargs):
-        return _RespuestaFalsa(self._payload)
+    def preguntar(self, **kwargs) -> str:
+        return self._texto
 
 
 def test_pedir_segunda_lectura_parsea_respuesta():
     payload = {"lecturas": [{"variable": "no_shows", "valor": 16, "confianza": 0.8, "nota": "conteo de filas ausentes"}]}
-    cliente = _ClienteFalso(payload)
-    lecturas = pedir_segunda_lectura(grid=[["mes", "no_shows"], ["Abril", 16]], variables=["no_shows"], client=cliente)
+    puerto_llm = _PuertoLLMFalso(payload)
+    lecturas = pedir_segunda_lectura(grid=[["mes", "no_shows"], ["Abril", 16]], variables=["no_shows"], puerto_llm=puerto_llm)
     assert lecturas["no_shows"]["valor"] == 16
 
 
 def test_pedir_segunda_lectura_sin_variables_no_llama_api():
-    cliente = _ClienteFalso({"lecturas": []})
-    assert pedir_segunda_lectura(grid=[[1, 2]], variables=[], client=cliente) == {}
+    puerto_llm = _PuertoLLMFalso({"lecturas": []})
+    assert pedir_segunda_lectura(grid=[[1, 2]], variables=[], puerto_llm=puerto_llm) == {}
 
 
 def test_contrastar_coincide_sube_confianza():
@@ -86,18 +82,18 @@ def test_contrastar_no_coincide_genera_discrepancia():
 # que ya devuelve pedir_segunda_lectura.
 # ---------------------------------------------------------------------------
 
-class _ClienteFalsoImagen:
-    """Mismo patrón que test_vision_parser.py: cliente falso que responde
-    con `payload` sin llamar a la API real, capturando la llamada."""
+class _PuertoLLMFalsoImagen:
+    """Mismo patrón que test_vision_parser.py: PuertoLLM falso que
+    responde con `payload` (ya serializado a JSON) sin llamar a la API
+    real, capturando los kwargs de la última llamada."""
 
     def __init__(self, payload: dict):
-        self._payload = payload
+        self._texto = json.dumps(payload)
         self.ultima_llamada = None
-        self.messages = SimpleNamespace(create=self._create)
 
-    def _create(self, **kwargs):
+    def preguntar(self, **kwargs) -> str:
         self.ultima_llamada = kwargs
-        return _RespuestaFalsa(self._payload)
+        return self._texto
 
 
 def _archivo_temporal_imagen():
@@ -112,8 +108,8 @@ def test_pedir_segunda_lectura_imagen_normaliza_al_contrato_de_lectura():
     payload = {"variables_encontradas": [
         {"variable": "no_shows", "valor": 16, "confianza": 0.8, "etiqueta_fila": "No-shows", "nota": "..."},
     ]}
-    cliente = _ClienteFalsoImagen(payload)
-    lecturas = pedir_segunda_lectura_imagen(path, ["no_shows"], cliente)
+    puerto_llm = _PuertoLLMFalsoImagen(payload)
+    lecturas = pedir_segunda_lectura_imagen(path, ["no_shows"], puerto_llm)
     assert lecturas["no_shows"]["valor"] == 16
     assert lecturas["no_shows"]["confianza"] == 0.8
     Path(path).unlink()
@@ -121,9 +117,9 @@ def test_pedir_segunda_lectura_imagen_normaliza_al_contrato_de_lectura():
 
 def test_pedir_segunda_lectura_imagen_sin_variables_no_llama_api():
     path = _archivo_temporal_imagen()
-    cliente = _ClienteFalsoImagen({"variables_encontradas": []})
-    assert pedir_segunda_lectura_imagen(path, [], cliente) == {}
-    assert cliente.ultima_llamada is None, "sin variables no debe invocar a la API"
+    puerto_llm = _PuertoLLMFalsoImagen({"variables_encontradas": []})
+    assert pedir_segunda_lectura_imagen(path, [], puerto_llm) == {}
+    assert puerto_llm.ultima_llamada is None, "sin variables no debe invocar a la API"
     Path(path).unlink()
 
 
@@ -136,8 +132,8 @@ def test_pedir_segunda_lectura_imagen_descarta_variables_no_pedidas():
         {"variable": "no_shows", "valor": 16, "confianza": 0.8},
         {"variable": "turnos_agendados", "valor": 40, "confianza": 0.9},
     ]}
-    cliente = _ClienteFalsoImagen(payload)
-    lecturas = pedir_segunda_lectura_imagen(path, ["no_shows"], cliente)
+    puerto_llm = _PuertoLLMFalsoImagen(payload)
+    lecturas = pedir_segunda_lectura_imagen(path, ["no_shows"], puerto_llm)
     assert list(lecturas.keys()) == ["no_shows"]
     Path(path).unlink()
 

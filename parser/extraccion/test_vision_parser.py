@@ -1,7 +1,7 @@
 """
 test_vision_parser.py
 
-Sin pytest, sin API real (mismo patrón de cliente mockeado que
+Sin pytest, sin API real (mismo patrón de PuertoLLM falso que
 test_segunda_lectura.py): corre con `python -m parser.extraccion.test_vision_parser`.
 
 vision_parser.py no tenía ningún test hasta la Fase H3 — nunca se había
@@ -11,27 +11,23 @@ corrido ni siquiera headless.
 import json
 import tempfile
 from pathlib import Path
-from types import SimpleNamespace
 
 from parser.vocabulario.schema import VARIABLE_TYPES
 from parser.extraccion.vision_parser import SYSTEM_PROMPT, _VARIABLES_FOTO, _media_type, parsear_imagen
 
 
-class _RespuestaFalsa:
-    def __init__(self, payload: dict):
-        self.content = [SimpleNamespace(type="text", text=json.dumps(payload))]
-        self.stop_reason = "end_turn"
+class _PuertoLLMFalso:
+    """Fake de PuertoLLM: .preguntar(...) devuelve directamente el texto
+    (JSON serializado) que vision_parser espera, sin pasar por
+    anthropic.Anthropic ni por client.messages.create."""
 
-
-class _ClienteFalso:
     def __init__(self, payload: dict):
-        self._payload = payload
+        self._texto = json.dumps(payload)
         self.ultima_llamada = None
-        self.messages = SimpleNamespace(create=self._create)
 
-    def _create(self, **kwargs):
+    def preguntar(self, **kwargs) -> str:
         self.ultima_llamada = kwargs
-        return _RespuestaFalsa(self._payload)
+        return self._texto
 
 
 def _archivo_temporal(sufijo=".jpg"):
@@ -44,8 +40,8 @@ def _archivo_temporal(sufijo=".jpg"):
 def test_fuente_queda_en_migracion_foto():
     path = _archivo_temporal()
     payload = {"variables_encontradas": [{"variable": "no_shows", "valor": 16, "confianza": 0.7}]}
-    cliente = _ClienteFalso(payload)
-    variables = parsear_imagen(path, client=cliente)
+    puerto_llm = _PuertoLLMFalso(payload)
+    variables = parsear_imagen(path, puerto_llm=puerto_llm)
     assert variables["no_shows"].fuente == "migracion_foto"
     Path(path).unlink()
 
@@ -53,8 +49,8 @@ def test_fuente_queda_en_migracion_foto():
 def test_variable_fuera_del_vocabulario_se_descarta():
     path = _archivo_temporal()
     payload = {"variables_encontradas": [{"variable": "inventada_por_el_modelo", "valor": 1, "confianza": 0.5}]}
-    cliente = _ClienteFalso(payload)
-    variables = parsear_imagen(path, client=cliente)
+    puerto_llm = _PuertoLLMFalso(payload)
+    variables = parsear_imagen(path, puerto_llm=puerto_llm)
     assert variables == {}
     Path(path).unlink()
 
@@ -65,8 +61,8 @@ def test_item_sin_valor_no_tira_abajo_el_lote():
         {"variable": "no_shows"},  # falta "valor" — mal formado
         {"variable": "resenas_nuevas", "valor": 9, "confianza": 0.8},
     ]}
-    cliente = _ClienteFalso(payload)
-    variables = parsear_imagen(path, client=cliente)
+    puerto_llm = _PuertoLLMFalso(payload)
+    variables = parsear_imagen(path, puerto_llm=puerto_llm)
     assert "no_shows" not in variables
     assert variables["resenas_nuevas"].valor == 9
     Path(path).unlink()
@@ -78,8 +74,8 @@ def test_item_sin_variable_no_tira_abajo_el_lote():
         {"valor": 5, "confianza": 0.5},  # falta "variable"
         {"variable": "pacientes_reactivados", "valor": 12, "confianza": 0.6},
     ]}
-    cliente = _ClienteFalso(payload)
-    variables = parsear_imagen(path, client=cliente)
+    puerto_llm = _PuertoLLMFalso(payload)
+    variables = parsear_imagen(path, puerto_llm=puerto_llm)
     assert len(variables) == 1
     assert variables["pacientes_reactivados"].valor == 12
     Path(path).unlink()
@@ -88,8 +84,8 @@ def test_item_sin_variable_no_tira_abajo_el_lote():
 def test_confianza_por_defecto_es_06():
     path = _archivo_temporal()
     payload = {"variables_encontradas": [{"variable": "no_shows", "valor": 16}]}
-    cliente = _ClienteFalso(payload)
-    variables = parsear_imagen(path, client=cliente)
+    puerto_llm = _PuertoLLMFalso(payload)
+    variables = parsear_imagen(path, puerto_llm=puerto_llm)
     assert variables["no_shows"].confianza == 0.6
     Path(path).unlink()
 
@@ -97,17 +93,17 @@ def test_confianza_por_defecto_es_06():
 def test_thinking_disabled_declarado():
     path = _archivo_temporal()
     payload = {"variables_encontradas": []}
-    cliente = _ClienteFalso(payload)
-    parsear_imagen(path, client=cliente)
-    assert cliente.ultima_llamada["thinking"] == {"type": "disabled"}
+    puerto_llm = _PuertoLLMFalso(payload)
+    parsear_imagen(path, puerto_llm=puerto_llm)
+    assert puerto_llm.ultima_llamada["thinking"] == {"type": "disabled"}
     Path(path).unlink()
 
 
 def test_variable_tipo_ledger_nunca_se_mapea_desde_una_foto():
     path = _archivo_temporal()
     payload = {"variables_encontradas": [{"variable": "ledger_pacientes", "valor": 1240, "confianza": 0.85}]}
-    cliente = _ClienteFalso(payload)
-    variables = parsear_imagen(path, client=cliente)
+    puerto_llm = _PuertoLLMFalso(payload)
+    variables = parsear_imagen(path, puerto_llm=puerto_llm)
     assert variables == {}
     Path(path).unlink()
 

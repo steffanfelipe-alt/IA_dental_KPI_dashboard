@@ -19,13 +19,8 @@ from typing import Optional
 
 from parser.vocabulario.schema import VARIABLE_TYPES
 from parser.cobertura_calidad.coverage import VariableValue
-from parser.vocabulario.claude_utils import extraer_json
-
-try:
-    import anthropic
-except ImportError:  # pragma: no cover
-    anthropic = None
-
+from parser.vocabulario.claude_utils import extraer_json_de_texto
+from parser.vocabulario.puerto_llm import AdaptadorAnthropic, PuertoLLM
 
 MODEL = "claude-sonnet-5"
 
@@ -93,15 +88,14 @@ def _media_type(path: str) -> str:
     }.get(ext, "image/jpeg")
 
 
-def parsear_imagen(path: str, client: Optional["anthropic.Anthropic"] = None) -> dict[str, VariableValue]:
-    if client is None:
-        assert anthropic is not None, "Instalar el SDK: pip install anthropic --break-system-packages"
-        client = anthropic.Anthropic()
+def parsear_imagen(path: str, puerto_llm: Optional[PuertoLLM] = None) -> dict[str, VariableValue]:
+    if puerto_llm is None:
+        puerto_llm = AdaptadorAnthropic()
 
     with open(path, "rb") as f:
         imagen_b64 = base64.standard_b64encode(f.read()).decode("utf-8")
 
-    respuesta = client.messages.create(
+    texto = puerto_llm.preguntar(
         model=MODEL,
         max_tokens=2000,
         thinking={"type": "disabled"},
@@ -117,7 +111,7 @@ def parsear_imagen(path: str, client: Optional["anthropic.Anthropic"] = None) ->
         }],
     )
 
-    payload = extraer_json(respuesta)
+    payload = extraer_json_de_texto(texto)
 
     variables: dict[str, VariableValue] = {}
     for item in payload.get("variables_encontradas", []):
@@ -142,20 +136,19 @@ def parsear_imagen(path: str, client: Optional["anthropic.Anthropic"] = None) ->
     return variables
 
 
-def parsear_pdf(path: str, client: Optional["anthropic.Anthropic"] = None) -> dict[str, VariableValue]:
+def parsear_pdf(path: str, puerto_llm: Optional[PuertoLLM] = None) -> dict[str, VariableValue]:
     """
     PDFs (export de otro sistema, o facturas escaneadas) se mandan como
     documento nativo — Claude los lee sin necesidad de rasterizar página
     por página primero.
     """
-    if client is None:
-        assert anthropic is not None, "Instalar el SDK: pip install anthropic --break-system-packages"
-        client = anthropic.Anthropic()
+    if puerto_llm is None:
+        puerto_llm = AdaptadorAnthropic()
 
     with open(path, "rb") as f:
         pdf_b64 = base64.standard_b64encode(f.read()).decode("utf-8")
 
-    respuesta = client.messages.create(
+    texto = puerto_llm.preguntar(
         model=MODEL,
         max_tokens=2000,
         thinking={"type": "disabled"},
@@ -171,7 +164,7 @@ def parsear_pdf(path: str, client: Optional["anthropic.Anthropic"] = None) -> di
         }],
     )
 
-    payload = extraer_json(respuesta)
+    payload = extraer_json_de_texto(texto)
 
     variables: dict[str, VariableValue] = {}
     for item in payload.get("variables_encontradas", []):

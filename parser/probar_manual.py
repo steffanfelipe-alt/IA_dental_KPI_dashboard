@@ -24,6 +24,7 @@ proyecto — nunca hardcodeada acá.
 """
 
 import os
+import shutil
 import subprocess
 import tempfile
 from datetime import datetime
@@ -174,12 +175,18 @@ def _parsear_valor_manual(texto: str):
 
 
 if st.button("Procesar migración", type="primary"):
+    # Se escribe cada archivo con su NOMBRE ORIGINAL dentro de un directorio
+    # temporal, en vez de un NamedTemporaryFile con nombre aleatorio. Así
+    # `archivo_origen` viaja como "presupuestos_abril_mayo2026.csv" y no como
+    # "tmpz9yashn9.csv" — el nombre real aparece en conflictos, trazabilidad,
+    # cuarentena y todo lo demás, que sólo repiten lo que el pipeline guardó.
+    dir_temporal = tempfile.mkdtemp()
     paths_temporales = []
     for archivo in archivos_subidos or []:
-        sufijo = Path(archivo.name).suffix
-        with tempfile.NamedTemporaryFile(delete=False, suffix=sufijo) as tmp:
-            tmp.write(archivo.getvalue())
-            paths_temporales.append(tmp.name)
+        destino = os.path.join(dir_temporal, os.path.basename(archivo.name))
+        with open(destino, "wb") as f:
+            f.write(archivo.getvalue())
+        paths_temporales.append(destino)
 
     respuestas = _parsear_respuestas()
     with st.spinner("Corriendo procesar_migracion contra la API real..."):
@@ -198,8 +205,7 @@ if st.button("Procesar migración", type="primary"):
         except Exception as e:
             st.exception(e)
         finally:
-            for p in paths_temporales:
-                os.unlink(p)
+            shutil.rmtree(dir_temporal, ignore_errors=True)
 
 resultado = st.session_state.resultado_migracion
 

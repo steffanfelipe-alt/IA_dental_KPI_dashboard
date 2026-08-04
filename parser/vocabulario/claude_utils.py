@@ -49,10 +49,15 @@ def extraer_texto(respuesta) -> str:
     )
 
 
-def extraer_json(respuesta) -> dict:
+def extraer_json_de_texto(texto: str) -> dict:
     """
-    Parsea el JSON de una respuesta de Claude que se pidió como "SOLO JSON,
-    sin texto adicional".
+    Parsea el JSON de un texto que se pidió como "SOLO JSON, sin texto
+    adicional" — misma lógica que `extraer_json`, pero a partir del texto
+    ya resuelto (lo que hoy devuelve `puerto_llm.PuertoLLM.preguntar`, que
+    internamente ya corrió `extraer_texto` sobre la respuesta cruda del
+    SDK). Separada de `extraer_json` para que el código del lado de acá
+    del puerto (excel_parser, vision_parser, segunda_lectura) nunca
+    necesite conocer la forma de una respuesta de Anthropic, sólo texto.
 
     Bug real que motiva esto: vision_parser.parsear_imagen asumía que el
     texto entero era ```texto.split("```")[1]``` — un fence ÚNICO que
@@ -75,7 +80,7 @@ def extraer_json(respuesta) -> dict:
     crudo: el objetivo es que el próximo fallo de este tipo diga QUÉ
     contestó Claude, no un JSONDecodeError pelado sin contexto.
     """
-    texto = extraer_texto(respuesta).strip()
+    texto = texto.strip()
     candidato = texto
 
     if "```" in candidato:
@@ -104,3 +109,15 @@ def extraer_json(respuesta) -> dict:
             f"La respuesta de Claude no es JSON válido ({e}). "
             f"Texto crudo recibido (recortado): {texto[:500]!r}"
         ) from e
+
+
+def extraer_json(respuesta) -> dict:
+    """
+    Parsea el JSON de una respuesta cruda de Claude (objeto del SDK, con
+    `.content`/`.stop_reason`) que se pidió como "SOLO JSON, sin texto
+    adicional". Delega toda la lógica de parseo a `extraer_json_de_texto`
+    — esta función sólo resuelve primero el texto vía `extraer_texto`.
+    Se mantiene para quien todavía tenga la respuesta cruda a mano (no
+    pasa por `PuertoLLM`).
+    """
+    return extraer_json_de_texto(extraer_texto(respuesta))

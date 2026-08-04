@@ -18,7 +18,6 @@ Flujo:
      conflictos pendientes de confirmación.
 """
 
-import inspect
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional
@@ -36,52 +35,59 @@ from parser.cobertura_calidad.validacion import validar_variable, validar_identi
 from parser.cobertura_calidad.reconciliacion import reconciliar
 from parser.cobertura_calidad.derivacion import derivar_variables_faltantes
 from parser.extraccion import segunda_lectura
+from parser.extraccion.estrategias import (
+    EstrategiaExtraccion, ExtraccionExcel, ExtraccionVisionImagen, ExtraccionVisionPDF,
+)
 from parser.pacientes import metricas_paciente
 from parser.interpretacion.explicaciones import nombre_humano
 from parser.extraccion import excel_parser, vision_parser
+from parser.vocabulario.puerto_llm import PuertoLLM
 
 
-EXTRACTOR_POR_EXTENSION = {
-    ".xlsx": excel_parser.parsear_excel,
-    ".xls": excel_parser.parsear_excel,
-    ".csv": excel_parser.parsear_excel,
-    ".png": vision_parser.parsear_imagen,
-    ".jpg": vision_parser.parsear_imagen,
-    ".jpeg": vision_parser.parsear_imagen,
-    ".webp": vision_parser.parsear_imagen,
-    ".pdf": vision_parser.parsear_pdf,
+# Una sola instancia de cada estrategia alcanza — son sin estado, sólo
+# envuelven las funciones de extraccion/excel_parser.py y
+# extraccion/vision_parser.py.
+_EXTRACCION_EXCEL = ExtraccionExcel()
+_EXTRACCION_IMAGEN = ExtraccionVisionImagen()
+_EXTRACCION_PDF = ExtraccionVisionPDF()
+
+EXTRACTOR_POR_EXTENSION: dict[str, EstrategiaExtraccion] = {
+    ".xlsx": _EXTRACCION_EXCEL,
+    ".xls": _EXTRACCION_EXCEL,
+    ".csv": _EXTRACCION_EXCEL,
+    ".png": _EXTRACCION_IMAGEN,
+    ".jpg": _EXTRACCION_IMAGEN,
+    ".jpeg": _EXTRACCION_IMAGEN,
+    ".webp": _EXTRACCION_IMAGEN,
+    ".pdf": _EXTRACCION_PDF,
 }
 
 
 def extraer_archivo(
-    path: str, client=None, registro_clientes: Optional[RegistroClientes] = None,
+    path: str, puerto_llm: Optional[PuertoLLM] = None, registro_clientes: Optional[RegistroClientes] = None,
 ) -> tuple[dict[str, VariableValue], dict[int, object]]:
     """
-    Devuelve (variables, tasas_declaradas). No todos los extractores
-    conocen tasas_declaradas (hoy solo excel_parser, ver reconciliacion.py
-    — vision_parser sigue devolviendo solo variables): se normaliza acá
-    para que pipeline.py no necesite saber qué extractor se usó.
+    Devuelve (variables, tasas_declaradas) a partir de la
+    `EstrategiaExtraccion` que corresponda a la extensión del archivo.
 
-    `registro_clientes` (Fase 2, matching.py): solo se pasa a extractores
-    que lo soportan (hoy: excel_parser.parsear_excel) — se detecta por
-    firma en vez de hardcodear "si es excel_parser", así un extractor
-    nuevo que lo declare se engancha solo, sin tocar este módulo.
+    Antes esto normalizaba a mano la forma del resultado
+    (`isinstance(resultado, tuple)`, porque excel_parser devolvía
+    (variables, tasas_declaradas) y vision_parser sólo variables) y
+    decidía por introspección (`inspect.signature`) si el extractor
+    soportaba `registro_clientes`. Con `ResultadoExtraccion` y el
+    contrato explícito de `EstrategiaExtraccion.extraer` (Fase Strategy),
+    ninguna de las dos cosas hace falta: toda estrategia devuelve la misma
+    forma y acepta `registro_clientes` siempre, aunque algunas lo
+    ignoren.
     """
     ext = Path(path).suffix.lower()
-    extractor = EXTRACTOR_POR_EXTENSION.get(ext)
-    if extractor is None:
+    estrategia = EXTRACTOR_POR_EXTENSION.get(ext)
+    if estrategia is None:
         raise ValueError(f"Formato no soportado: {ext}. Soportados: {list(EXTRACTOR_POR_EXTENSION)}")
-    kwargs = {}
-    if registro_clientes is not None and "registro_clientes" in inspect.signature(extractor).parameters:
-        kwargs["registro_clientes"] = registro_clientes
-    resultado = extractor(path, client, **kwargs)
-    if isinstance(resultado, tuple):
-        variables, tasas_declaradas = resultado
-    else:
-        variables, tasas_declaradas = resultado, {}
+    resultado = estrategia.extraer(path, puerto_llm, registro_clientes=registro_clientes)
     nombre_archivo = Path(path).name
-    variables = {var: replace(valor, archivo_origen=nombre_archivo) for var, valor in variables.items()}
-    return variables, tasas_declaradas
+    variables = {var: replace(valor, archivo_origen=nombre_archivo) for var, valor in resultado.variables.items()}
+    return variables, resultado.tasas_declaradas
 
 
 def _nombre_candidato(c: dict) -> str:
@@ -159,7 +165,7 @@ def _segunda_lectura_para_variables_dudosas(
     variables: dict[str, VariableValue],
     variables_ya_reconciliadas: set[str],
     archivos: list[str],
-    client,
+    puerto_llm: Optional[PuertoLLM],
 ) -> dict[str, VariableValue]:
     """
     Última red del plan de confiabilidad (Fase 3): lo que queda con
@@ -170,7 +176,7 @@ def _segunda_lectura_para_variables_dudosas(
     la correcta, eso ya lo muestra el sistema como "a confirmar"
     (variables_a_confirmar en el payload final).
     """
-    if client is None:
+    if puerto_llm is None:
         return variables
 
     a_verificar = segunda_lectura.variables_a_verificar(variables, variables_ya_reconciliadas)
@@ -202,7 +208,7 @@ def _segunda_lectura_para_variables_dudosas(
     for nombre_archivo, vars_de_foto in por_archivo_foto.items():
         path = archivo_por_nombre[nombre_archivo]
         try:
-            lecturas = segunda_lectura.pedir_segunda_lectura_imagen(path, vars_de_foto, client)
+            lecturas = segunda_lectura.pedir_segunda_lectura_imagen(path, vars_de_foto, puerto_llm)
         except Exception:
             continue
         confianza_actualizada, _discrepancias = segunda_lectura.contrastar(variables, lecturas)
@@ -231,7 +237,7 @@ def _segunda_lectura_para_variables_dudosas(
         grid = next((h["grid"] for h in hojas if h.get("hoja") == hoja), hojas[0]["grid"])
 
         try:
-            lecturas = segunda_lectura.pedir_segunda_lectura(grid, vars_de_hoja, client)
+            lecturas = segunda_lectura.pedir_segunda_lectura(grid, vars_de_hoja, puerto_llm)
         except Exception:
             continue
         confianza_actualizada, _discrepancias = segunda_lectura.contrastar(variables, lecturas)
@@ -244,7 +250,7 @@ def _segunda_lectura_para_variables_dudosas(
 def procesar_migracion(
     archivos: list[str],
     variables_previas: Optional[dict[str, VariableValue]] = None,
-    client=None,
+    puerto_llm: Optional[PuertoLLM] = None,
     respuestas_diagnostico: Optional[dict[str, str]] = None,
 ) -> dict:
     """
@@ -282,7 +288,7 @@ def procesar_migracion(
     archivos_fallidos: list[dict[str, str]] = []
     for a in archivos:
         try:
-            extraidas_por_archivo.append(extraer_archivo(a, client, registro_clientes=registro_clientes))
+            extraidas_por_archivo.append(extraer_archivo(a, puerto_llm, registro_clientes=registro_clientes))
         except Exception as exc:
             # Un archivo problemático (ej. una foto ambigua que hace que
             # vision_parser no pueda parsear el JSON de Claude) no puede
@@ -382,7 +388,7 @@ def procesar_migracion(
     # Las derivadas no se releen: no están escritas en la hoja (son un
     # despeje), así que una segunda lectura no tendría de dónde sacarlas.
     variables_ya_reconciliadas |= set(nuevas_derivadas)
-    variables = _segunda_lectura_para_variables_dudosas(variables, variables_ya_reconciliadas, archivos, client)
+    variables = _segunda_lectura_para_variables_dudosas(variables, variables_ya_reconciliadas, archivos, puerto_llm)
 
     # Fase H4c: si hay ledger_pacientes, ltv_real() es una suma real de
     # eventos "pago" ya extraídos de filas concretas — no un despeje

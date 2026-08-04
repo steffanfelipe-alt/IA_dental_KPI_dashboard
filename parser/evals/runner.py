@@ -23,6 +23,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from parser.evals import casos_dorados as dorado
+from parser.vocabulario.puerto_llm import AdaptadorAnthropic
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 XLSX = str(FIXTURES_DIR / "clinica_demo_metricas.xlsx")
@@ -43,9 +44,9 @@ def _cerca(a, b, tolerancia_pct=TOLERANCIA_PCT) -> bool:
     return abs(a - b) / abs(b) * 100 <= tolerancia_pct
 
 
-def _correr_una_vez(client) -> dict:
+def _correr_una_vez(puerto_llm) -> dict:
     from parser.pipeline import procesar_migracion
-    return procesar_migracion([XLSX, CSV], client=client)
+    return procesar_migracion([XLSX, CSV], puerto_llm=puerto_llm)
 
 
 def _reportar_variables(resultado: dict) -> list[tuple[str, bool, str]]:
@@ -117,11 +118,12 @@ def main():
     load_dotenv(str(Path(__file__).resolve().parent.parent.parent / ".env"))
     import anthropic
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    puerto_llm = AdaptadorAnthropic(client)
 
     resultados_por_variable: dict[str, list[bool]] = {}
     for intento in range(1, args.repetir + 1):
         print(f"\n=== Corrida {intento}/{args.repetir} ===")
-        resultado = _correr_una_vez(client)
+        resultado = _correr_una_vez(puerto_llm)
 
         print("\n-- Variables --")
         for nombre, ok, detalle in _reportar_variables(resultado):

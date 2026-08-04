@@ -3,17 +3,26 @@ test_pipeline.py
 
 Sin pytest: corre con `python -m parser.test_pipeline`.
 Cubre el enhebrado de RegistroClientes (Fase 2) a través de
-pipeline.extraer_archivo/procesar_migracion: que solo se le pase a
-extractores que lo declaran en su firma, que un mismo registro se
+pipeline.extraer_archivo/procesar_migracion — que un mismo registro se
 comparta entre archivos de una migración, y que los matches ambiguos
-terminen en conflictos_pendientes — el mismo canal que ya usa conflictos.py.
+terminen en conflictos_pendientes (el mismo canal que ya usa
+conflictos.py) — y, desde la Fase Strategy+Adapter, que
+`EXTRACTOR_POR_EXTENSION` funcione con objetos `EstrategiaExtraccion`
+(`.extraer(path, puerto_llm, *, registro_clientes=None) ->
+ResultadoExtraccion`) en vez de funciones sueltas: `registro_clientes` ya
+no se detecta por introspección (`inspect.signature`), se pasa siempre —
+las estrategias que no lo usan simplemente lo ignoran.
 
-Usa extractores falsos (no llama a la API real) para poder probar el
-enhebrado de parámetros de forma determinista.
+Usa estrategias falsas (no llama a la API real, `puerto_llm=None` alcanza
+porque nunca se dispara una llamada real) para poder probar el enhebrado
+de parámetros de forma determinista.
 """
+
+from types import SimpleNamespace
 
 from parser import pipeline
 from parser.cobertura_calidad.coverage import VariableValue
+from parser.extraccion.estrategias import ResultadoExtraccion
 from parser.pacientes.matching import RegistroClientes
 
 
@@ -21,26 +30,50 @@ def _restaurar_extractores(original):
     pipeline.EXTRACTOR_POR_EXTENSION = original
 
 
-def test_extraer_archivo_solo_pasa_registro_a_quien_lo_declara():
+def _estrategia(fn):
+    """Envuelve una función de test `(path, puerto_llm, *, registro_clientes=None)
+    -> (variables, tasas_declaradas)` en un objeto con `.extraer` que ya
+    devuelve `ResultadoExtraccion` — la misma forma que produce una
+    `EstrategiaExtraccion` real, sin tener que declarar una clase nueva
+    por cada test."""
+
+    def extraer(path, puerto_llm, *, registro_clientes=None):
+        variables, tasas_declaradas = fn(path, puerto_llm, registro_clientes=registro_clientes)
+        return ResultadoExtraccion(variables=variables, tasas_declaradas=tasas_declaradas)
+
+    return SimpleNamespace(extraer=extraer)
+
+
+def test_extraer_archivo_pasa_registro_clientes_uniformemente_a_toda_estrategia():
+    # Fase Strategy+Adapter: `registro_clientes` ya no se detecta por
+    # firma (inspect.signature) — el contrato EstrategiaExtraccion lo
+    # declara siempre, así que toda estrategia lo recibe, la use o no
+    # (antes sólo lo recibía quien lo declaraba explícito en su función).
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
     llamadas = {}
 
-    def extractor_con_soporte(path, client, registro_clientes=None):
-        llamadas["con_soporte"] = registro_clientes
+    def extractor_que_usa_registro(path, puerto_llm, registro_clientes=None):
+        llamadas["usa_registro"] = registro_clientes
         return {}, {}
 
-    def extractor_sin_soporte(path, client):
-        llamadas["sin_soporte"] = "llamado"
-        return {}
+    def extractor_que_lo_ignora(path, puerto_llm, registro_clientes=None):
+        llamadas["lo_ignora"] = registro_clientes
+        return {}, {}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": extractor_con_soporte, ".png": extractor_sin_soporte}
+    pipeline.EXTRACTOR_POR_EXTENSION = {
+        ".xlsx": _estrategia(extractor_que_usa_registro),
+        ".png": _estrategia(extractor_que_lo_ignora),
+    }
     try:
         registro = RegistroClientes()
-        pipeline.extraer_archivo("clinica.xlsx", client=None, registro_clientes=registro)
-        pipeline.extraer_archivo("foto.png", client=None, registro_clientes=registro)
+        pipeline.extraer_archivo("clinica.xlsx", puerto_llm=None, registro_clientes=registro)
+        pipeline.extraer_archivo("foto.png", puerto_llm=None, registro_clientes=registro)
 
-        assert llamadas["con_soporte"] is registro
-        assert llamadas["sin_soporte"] == "llamado"  # no explotó por recibir un kwarg que no acepta
+        assert llamadas["usa_registro"] is registro
+        assert llamadas["lo_ignora"] is registro, (
+            "una estrategia que no usa registro_clientes igual debe recibirlo, "
+            "sin romper — ya no es opcional por firma"
+        )
     finally:
         _restaurar_extractores(original)
 
@@ -49,13 +82,13 @@ def test_mismo_registro_se_comparte_entre_archivos_de_una_migracion():
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
     registros_vistos = []
 
-    def extractor_fake(path, client, registro_clientes=None):
+    def extractor_fake(path, puerto_llm, registro_clientes=None):
         registros_vistos.append(registro_clientes)
         return {}, {}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": extractor_fake}
+    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": _estrategia(extractor_fake)}
     try:
-        pipeline.procesar_migracion(["archivo1.xlsx", "archivo2.xlsx"], client=None)
+        pipeline.procesar_migracion(["archivo1.xlsx", "archivo2.xlsx"], puerto_llm=None)
         assert len(registros_vistos) == 2
         assert registros_vistos[0] is registros_vistos[1], "los dos archivos deben compartir el mismo RegistroClientes"
     finally:
@@ -65,7 +98,7 @@ def test_mismo_registro_se_comparte_entre_archivos_de_una_migracion():
 def test_matches_ambiguos_llegan_a_conflictos_pendientes():
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
 
-    def extractor_que_deja_ambiguo(path, client, registro_clientes=None):
+    def extractor_que_deja_ambiguo(path, puerto_llm, registro_clientes=None):
         # Simula lo que aplicar_mapeo haría al toparse con una zona gris real.
         registro_clientes.ambiguos.append({
             "nombre": "Juana Perez", "cliente_id_provisorio": "pac_xxx",
@@ -74,9 +107,9 @@ def test_matches_ambiguos_llegan_a_conflictos_pendientes():
         variables = {"consultas_nuevas_mes": VariableValue(50, "migracion_excel", 0.9)}
         return variables, {}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": extractor_que_deja_ambiguo}
+    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": _estrategia(extractor_que_deja_ambiguo)}
     try:
-        resultado = pipeline.procesar_migracion(["clinica.xlsx"], client=None)
+        resultado = pipeline.procesar_migracion(["clinica.xlsx"], puerto_llm=None)
         pendientes_paciente = [c for c in resultado["conflictos_pendientes"] if c["variable"] == "identidad_paciente"]
         assert len(pendientes_paciente) == 1
         assert "Juana Perez" in pendientes_paciente[0]["pregunta"]
@@ -89,12 +122,12 @@ def test_matches_ambiguos_llegan_a_conflictos_pendientes():
 def test_sin_ambiguos_no_agrega_nada_a_conflictos_pendientes():
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
 
-    def extractor_limpio(path, client, registro_clientes=None):
+    def extractor_limpio(path, puerto_llm, registro_clientes=None):
         return {"consultas_nuevas_mes": VariableValue(50, "migracion_excel", 0.9)}, {}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": extractor_limpio}
+    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": _estrategia(extractor_limpio)}
     try:
-        resultado = pipeline.procesar_migracion(["clinica.xlsx"], client=None)
+        resultado = pipeline.procesar_migracion(["clinica.xlsx"], puerto_llm=None)
         assert resultado["conflictos_pendientes"] == []
     finally:
         _restaurar_extractores(original)
@@ -105,15 +138,15 @@ def test_sin_respuestas_diagnostico_diagnostico_queda_en_none():
     # el default no debe ejecutar nada nuevo.
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
 
-    def extractor_con_kpi4(path, client, registro_clientes=None):
+    def extractor_con_kpi4(path, puerto_llm, registro_clientes=None):
         return {
             "no_shows": VariableValue(40, "migracion_excel", 0.9),
             "turnos_agendados": VariableValue(100, "migracion_excel", 0.9),
         }, {}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": extractor_con_kpi4}
+    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": _estrategia(extractor_con_kpi4)}
     try:
-        resultado = pipeline.procesar_migracion(["clinica.xlsx"], client=None)
+        resultado = pipeline.procesar_migracion(["clinica.xlsx"], puerto_llm=None)
         assert resultado["diagnostico"] is None
         assert resultado["oportunidades_priorizadas"] is None
     finally:
@@ -123,15 +156,15 @@ def test_sin_respuestas_diagnostico_diagnostico_queda_en_none():
 def test_con_respuestas_diagnostico_cablea_diagnostico_y_oportunidades():
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
 
-    def extractor_con_kpi4(path, client, registro_clientes=None):
+    def extractor_con_kpi4(path, puerto_llm, registro_clientes=None):
         return {
             "no_shows": VariableValue(40, "migracion_excel", 0.9),  # 40% de no-show: KPI4 bien fuera de rango (8-15)
             "turnos_agendados": VariableValue(100, "migracion_excel", 0.9),
         }, {}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": extractor_con_kpi4}
+    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": _estrategia(extractor_con_kpi4)}
     try:
-        resultado = pipeline.procesar_migracion(["clinica.xlsx"], client=None, respuestas_diagnostico={})
+        resultado = pipeline.procesar_migracion(["clinica.xlsx"], puerto_llm=None, respuestas_diagnostico={})
         assert resultado["diagnostico"] is not None
         assert any(d.kpi_id == 4 for d in resultado["diagnostico"])
         assert resultado["oportunidades_priorizadas"] is not None
@@ -146,7 +179,7 @@ def test_cruces_se_calculan_independientemente_de_respuestas_diagnostico():
     siempre, porque es puramente determinista sobre las variables."""
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
 
-    def extractor_con_cruce(path, client, registro_clientes=None):
+    def extractor_con_cruce(path, puerto_llm, registro_clientes=None):
         serie_monto = {"2026-01": 4000000.0, "2026-02": 5000000.0}
         serie_pacientes = {"2026-01": 50.0, "2026-02": 60.0}
         return {
@@ -154,16 +187,16 @@ def test_cruces_se_calculan_independientemente_de_respuestas_diagnostico():
             "pacientes_atendidos_periodo": VariableValue(60, "migracion_excel", 0.9, serie=serie_pacientes),
         }, {}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": extractor_con_cruce}
+    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": _estrategia(extractor_con_cruce)}
     try:
-        sin_respuestas = pipeline.procesar_migracion(["clinica.xlsx"], client=None)
+        sin_respuestas = pipeline.procesar_migracion(["clinica.xlsx"], puerto_llm=None)
         assert sin_respuestas["diagnostico"] is None  # esto sí depende de respuestas_diagnostico
         assert any(
             c.variable_a == "monto_cobrado" and c.variable_b == "pacientes_atendidos_periodo"
             for c in sin_respuestas["cruces"]
         ), "el cruce debe existir aunque no se hayan cargado respuestas de la Guía"
 
-        con_respuestas = pipeline.procesar_migracion(["clinica.xlsx"], client=None, respuestas_diagnostico={})
+        con_respuestas = pipeline.procesar_migracion(["clinica.xlsx"], puerto_llm=None, respuestas_diagnostico={})
         assert len(con_respuestas["cruces"]) == len(sin_respuestas["cruces"])
     finally:
         _restaurar_extractores(original)
@@ -221,12 +254,12 @@ def _ledger_con_pagos():
 def test_con_ledger_de_pagos_kpi14_se_calcula_y_es_trazable():
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
 
-    def extractor_con_ledger(path, client, registro_clientes=None):
+    def extractor_con_ledger(path, puerto_llm, registro_clientes=None):
         return {"ledger_pacientes": VariableValue(_ledger_con_pagos(), "migracion_excel", 0.9)}, {}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".csv": extractor_con_ledger}
+    pipeline.EXTRACTOR_POR_EXTENSION = {".csv": _estrategia(extractor_con_ledger)}
     try:
-        resultado = pipeline.procesar_migracion(["cobros.csv"], client=None)
+        resultado = pipeline.procesar_migracion(["cobros.csv"], puerto_llm=None)
         assert 14 in resultado["kpis_calculados"]
         ingreso = resultado["variables"]["ingreso_por_paciente"]
         assert ingreso.valor == {"P1": 130000.0, "P2": 30000.0}
@@ -241,12 +274,12 @@ def test_ledger_sin_pagos_kpi14_sigue_bloqueado_pero_metricas_no_es_none():
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
     ledger_sin_pagos = {"P1": [{"periodo": "2026-01", "tipo_evento": "turno_asistido", "monto": None, "tratamiento": None}]}
 
-    def extractor_sin_pagos(path, client, registro_clientes=None):
+    def extractor_sin_pagos(path, puerto_llm, registro_clientes=None):
         return {"ledger_pacientes": VariableValue(ledger_sin_pagos, "migracion_excel", 0.9)}, {}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".csv": extractor_sin_pagos}
+    pipeline.EXTRACTOR_POR_EXTENSION = {".csv": _estrategia(extractor_sin_pagos)}
     try:
-        resultado = pipeline.procesar_migracion(["turnos.csv"], client=None)
+        resultado = pipeline.procesar_migracion(["turnos.csv"], puerto_llm=None)
         assert 14 not in resultado["kpis_calculados"]
         assert "ingreso_por_paciente" not in resultado["variables"]
         assert resultado["metricas_paciente"] is not None  # el ledger existe, aunque ltv_real de vacío
@@ -258,12 +291,12 @@ def test_ledger_sin_pagos_kpi14_sigue_bloqueado_pero_metricas_no_es_none():
 def test_sin_ledger_metricas_paciente_es_none_y_nada_mas_cambia():
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
 
-    def extractor_limpio(path, client, registro_clientes=None):
+    def extractor_limpio(path, puerto_llm, registro_clientes=None):
         return {"consultas_nuevas_mes": VariableValue(50, "migracion_excel", 0.9)}, {}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": extractor_limpio}
+    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": _estrategia(extractor_limpio)}
     try:
-        resultado = pipeline.procesar_migracion(["clinica.xlsx"], client=None)
+        resultado = pipeline.procesar_migracion(["clinica.xlsx"], puerto_llm=None)
         assert resultado["metricas_paciente"] is None
         assert "ingreso_por_paciente" not in resultado["variables"]
     finally:
@@ -273,15 +306,15 @@ def test_sin_ledger_metricas_paciente_es_none_y_nada_mas_cambia():
 def test_ledger_no_pisa_ingreso_por_paciente_ya_extraido():
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
 
-    def extractor_con_ledger(path, client, registro_clientes=None):
+    def extractor_con_ledger(path, puerto_llm, registro_clientes=None):
         return {
             "ledger_pacientes": VariableValue(_ledger_con_pagos(), "migracion_excel", 0.9),
             "ingreso_por_paciente": VariableValue({"P9": 999.0}, "migracion_excel", 0.9),
         }, {}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".csv": extractor_con_ledger}
+    pipeline.EXTRACTOR_POR_EXTENSION = {".csv": _estrategia(extractor_con_ledger)}
     try:
-        resultado = pipeline.procesar_migracion(["cobros.csv"], client=None)
+        resultado = pipeline.procesar_migracion(["cobros.csv"], puerto_llm=None)
         assert resultado["variables"]["ingreso_por_paciente"].valor == {"P9": 999.0}
     finally:
         _restaurar_extractores(original)
@@ -290,22 +323,24 @@ def test_ledger_no_pisa_ingreso_por_paciente_ya_extraido():
 def test_dos_archivos_con_ledger_se_fusionan_en_vez_de_generar_conflicto():
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
 
-    def extractor_cobros(path, client, registro_clientes=None):
+    def extractor_cobros(path, puerto_llm, registro_clientes=None):
         return {"ledger_pacientes": VariableValue(
             {"P1": [{"periodo": "2026-01", "tipo_evento": "pago", "monto": 50000, "tratamiento": None}]},
             "migracion_excel", 0.9,
         )}, {}
 
-    def extractor_turnos(path, client, registro_clientes=None):
+    def extractor_turnos(path, puerto_llm, registro_clientes=None):
         return {"ledger_pacientes": VariableValue(
             {"P1": [{"periodo": "2026-01", "tipo_evento": "turno_asistido", "monto": None, "tratamiento": None}],
              "P2": [{"periodo": "2026-02", "tipo_evento": "turno_no_show", "monto": None, "tratamiento": None}]},
             "migracion_excel", 0.85,
         )}, {}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".csv": extractor_cobros, ".xlsx": extractor_turnos}
+    pipeline.EXTRACTOR_POR_EXTENSION = {
+        ".csv": _estrategia(extractor_cobros), ".xlsx": _estrategia(extractor_turnos),
+    }
     try:
-        resultado = pipeline.procesar_migracion(["cobros.csv", "turnos.xlsx"], client=None)
+        resultado = pipeline.procesar_migracion(["cobros.csv", "turnos.xlsx"], puerto_llm=None)
         assert resultado["conflictos_pendientes"] == []  # nunca un "conflicto" entre dos ledgers
         ledger = resultado["variables"]["ledger_pacientes"].valor
         assert len(ledger["P1"]) == 2  # el pago Y el turno_asistido, no uno pisando al otro
@@ -320,22 +355,17 @@ def test_dos_archivos_con_ledger_se_fusionan_en_vez_de_generar_conflicto():
 # ---------------------------------------------------------------------------
 
 def test_pregunta_valores_distintos_nombra_los_valores_y_archivos():
-    from parser.cobertura_calidad.conflictos import resolver_conflictos
-    fuentes = [
-        {"no_shows": VariableValue(56, "migracion_excel", 0.8, archivo_origen="a.xlsx")},
-        {"no_shows": VariableValue(60, "migracion_excel", 0.75, archivo_origen="b.xlsx")},
-    ]
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
 
-    def extractor_a(path, client, registro_clientes=None):
+    def extractor_a(path, puerto_llm, registro_clientes=None):
         return {"no_shows": VariableValue(56, "migracion_excel", 0.8, archivo_origen="a.xlsx")}, {}
 
-    def extractor_b(path, client, registro_clientes=None):
+    def extractor_b(path, puerto_llm, registro_clientes=None):
         return {"no_shows": VariableValue(60, "migracion_excel", 0.75, archivo_origen="b.xlsx")}, {}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": extractor_a, ".csv": extractor_b}
+    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": _estrategia(extractor_a), ".csv": _estrategia(extractor_b)}
     try:
-        resultado = pipeline.procesar_migracion(["a.xlsx", "b.csv"], client=None)
+        resultado = pipeline.procesar_migracion(["a.xlsx", "b.csv"], puerto_llm=None)
         pendiente = next(c for c in resultado["conflictos_pendientes"] if c["variable"] == "no_shows")
         assert "56" in pendiente["pregunta"]
         assert "60" in pendiente["pregunta"]
@@ -354,13 +384,13 @@ def test_pregunta_contradice_confirmado_nombra_el_valor_confirmado():
     )
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
 
-    def extractor_discrepante(path, client, registro_clientes=None):
+    def extractor_discrepante(path, puerto_llm, registro_clientes=None):
         return {"no_shows": VariableValue(99, "migracion_excel", 0.9, archivo_origen="nuevo.xlsx")}, {}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": extractor_discrepante}
+    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": _estrategia(extractor_discrepante)}
     try:
         resultado2 = pipeline.procesar_migracion(
-            ["nuevo.xlsx"], variables_previas=resultado["variables"], client=None,
+            ["nuevo.xlsx"], variables_previas=resultado["variables"], puerto_llm=None,
         )
         pendiente = next(c for c in resultado2["conflictos_pendientes"] if c["variable"] == "no_shows")
         assert "56" in pendiente["pregunta"]
@@ -375,22 +405,24 @@ def test_un_archivo_que_explota_no_tira_abajo_la_migracion_de_los_demas():
     # con un JSONDecodeError sin capturar, y eso tiraba abajo TODA la
     # migración aunque otros archivos (xlsx, csv) fueran perfectamente
     # procesables. extraer_archivo ahora se llama dentro de un try/except
-    # por archivo — este test fija ese comportamiento con un extractor que
-    # explota de verdad, sin mockear json.loads.
+    # por archivo — este test fija ese comportamiento con una estrategia
+    # que explota de verdad, sin mockear json.loads.
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
 
-    def extractor_ok(path, client, registro_clientes=None):
+    def extractor_ok(path, puerto_llm, registro_clientes=None):
         return {
             "no_shows": VariableValue(40, "migracion_excel", 0.9),
             "turnos_agendados": VariableValue(100, "migracion_excel", 0.9),
         }, {}
 
-    def extractor_que_explota(path, client, registro_clientes=None):
+    def extractor_que_explota(path, puerto_llm, registro_clientes=None):
         raise ValueError("JSON inválido, no se pudo parsear la respuesta de Claude")
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": extractor_ok, ".png": extractor_que_explota}
+    pipeline.EXTRACTOR_POR_EXTENSION = {
+        ".xlsx": _estrategia(extractor_ok), ".png": _estrategia(extractor_que_explota),
+    }
     try:
-        resultado = pipeline.procesar_migracion(["clinica.xlsx", "control_recall.png"], client=None)
+        resultado = pipeline.procesar_migracion(["clinica.xlsx", "control_recall.png"], puerto_llm=None)
 
         assert len(resultado["archivos_fallidos"]) == 1
         assert resultado["archivos_fallidos"][0]["archivo"] == "control_recall.png"
@@ -406,12 +438,12 @@ def test_un_archivo_que_explota_no_tira_abajo_la_migracion_de_los_demas():
 def test_todos_los_archivos_fallan_no_rompe_devuelve_migracion_vacia():
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
 
-    def extractor_que_explota(path, client, registro_clientes=None):
+    def extractor_que_explota(path, puerto_llm, registro_clientes=None):
         raise RuntimeError("timeout de red")
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".png": extractor_que_explota}
+    pipeline.EXTRACTOR_POR_EXTENSION = {".png": _estrategia(extractor_que_explota)}
     try:
-        resultado = pipeline.procesar_migracion(["a.png", "b.png"], client=None)
+        resultado = pipeline.procesar_migracion(["a.png", "b.png"], puerto_llm=None)
         assert len(resultado["archivos_fallidos"]) == 2
         assert resultado["kpis_calculados"] == {}
     finally:
@@ -431,24 +463,24 @@ def test_segunda_lectura_de_variable_de_foto_usa_relectura_de_imagen_no_grid_de_
     llamadas_grid = []
     llamadas_imagen = []
 
-    def extractor_foto(path, client, registro_clientes=None):
+    def extractor_foto(path, puerto_llm, registro_clientes=None):
         return {"no_shows": VariableValue(16, "migracion_foto", 0.5)}, {}
 
     def leer_hojas_crudas_espia(path):
         llamadas_grid.append(path)
         return []
 
-    def pedir_segunda_lectura_imagen_espia(path, variables, client):
+    def pedir_segunda_lectura_imagen_espia(path, variables, puerto_llm):
         llamadas_imagen.append((path, variables))
         return {"no_shows": {"variable": "no_shows", "valor": 16, "confianza": 0.8}}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".png": extractor_foto}
+    pipeline.EXTRACTOR_POR_EXTENSION = {".png": _estrategia(extractor_foto)}
     original_leer_hojas = pipeline.excel_parser.leer_hojas_crudas
     original_pedir_imagen = pipeline.segunda_lectura.pedir_segunda_lectura_imagen
     pipeline.excel_parser.leer_hojas_crudas = leer_hojas_crudas_espia
     pipeline.segunda_lectura.pedir_segunda_lectura_imagen = pedir_segunda_lectura_imagen_espia
     try:
-        resultado = pipeline.procesar_migracion(["foto.png"], client=object())
+        resultado = pipeline.procesar_migracion(["foto.png"], puerto_llm=object())
         assert llamadas_imagen == [("foto.png", ["no_shows"])]
         assert llamadas_grid == [], "una variable migracion_foto no debe pasar por leer_hojas_crudas"
         assert resultado["variables"]["no_shows"].confianza == 0.7  # 0.5 + 0.2 (coincide)
@@ -461,18 +493,18 @@ def test_segunda_lectura_de_variable_de_foto_usa_relectura_de_imagen_no_grid_de_
 def test_segunda_lectura_de_foto_que_no_coincide_no_sube_confianza():
     original_extractores = dict(pipeline.EXTRACTOR_POR_EXTENSION)
 
-    def extractor_foto(path, client, registro_clientes=None):
+    def extractor_foto(path, puerto_llm, registro_clientes=None):
         return {"no_shows": VariableValue(57, "migracion_foto", 0.5)}, {}
 
-    def pedir_segunda_lectura_imagen_espia(path, variables, client):
+    def pedir_segunda_lectura_imagen_espia(path, variables, puerto_llm):
         # La relectura ciega dice otra cosa — no coincide dentro del 5%.
         return {"no_shows": {"variable": "no_shows", "valor": 16, "confianza": 0.8}}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".png": extractor_foto}
+    pipeline.EXTRACTOR_POR_EXTENSION = {".png": _estrategia(extractor_foto)}
     original_pedir_imagen = pipeline.segunda_lectura.pedir_segunda_lectura_imagen
     pipeline.segunda_lectura.pedir_segunda_lectura_imagen = pedir_segunda_lectura_imagen_espia
     try:
-        resultado = pipeline.procesar_migracion(["foto.png"], client=object())
+        resultado = pipeline.procesar_migracion(["foto.png"], puerto_llm=object())
         assert resultado["variables"]["no_shows"].confianza == 0.5, "sin coincidencia, la confianza no sube"
     finally:
         pipeline.EXTRACTOR_POR_EXTENSION = original_extractores
@@ -486,24 +518,24 @@ def test_segunda_lectura_de_variable_de_planilla_sigue_usando_el_grid_de_excel()
     llamadas_grid = []
     llamadas_imagen = []
 
-    def extractor_planilla(path, client, registro_clientes=None):
+    def extractor_planilla(path, puerto_llm, registro_clientes=None):
         return {"no_shows": VariableValue(16, "migracion_excel", 0.5)}, {}
 
     def leer_hojas_crudas_espia(path):
         llamadas_grid.append(path)
         return []  # no hace falta simular un grid real para esta regresión
 
-    def pedir_segunda_lectura_imagen_espia(path, variables, client):
+    def pedir_segunda_lectura_imagen_espia(path, variables, puerto_llm):
         llamadas_imagen.append((path, variables))
         return {}
 
-    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": extractor_planilla}
+    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": _estrategia(extractor_planilla)}
     original_leer_hojas = pipeline.excel_parser.leer_hojas_crudas
     original_pedir_imagen = pipeline.segunda_lectura.pedir_segunda_lectura_imagen
     pipeline.excel_parser.leer_hojas_crudas = leer_hojas_crudas_espia
     pipeline.segunda_lectura.pedir_segunda_lectura_imagen = pedir_segunda_lectura_imagen_espia
     try:
-        pipeline.procesar_migracion(["clinica.xlsx"], client=object())
+        pipeline.procesar_migracion(["clinica.xlsx"], puerto_llm=object())
         assert llamadas_grid == ["clinica.xlsx"], "el camino de Excel debe seguir llamando a leer_hojas_crudas"
         assert llamadas_imagen == [], "una variable migracion_excel no debe pasar por la relectura de imagen"
     finally:

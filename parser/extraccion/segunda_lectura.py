@@ -34,18 +34,12 @@ ambiguo, no a cada archivo.
 """
 
 import json
-from typing import Any, Optional
 
 from parser.vocabulario.schema import METRICAS
 from parser.cobertura_calidad.coverage import VariableValue
-from parser.vocabulario.claude_utils import extraer_json
+from parser.vocabulario.claude_utils import extraer_json_de_texto
+from parser.vocabulario.puerto_llm import PuertoLLM
 from parser.extraccion import vision_parser
-
-try:
-    import anthropic
-except ImportError:  # pragma: no cover
-    anthropic = None
-
 
 MODEL = "claude-sonnet-5"
 UMBRAL_CONFIANZA_BAJA = 0.7
@@ -81,7 +75,7 @@ def variables_a_verificar(
 
 
 def pedir_segunda_lectura(
-    grid: list[list], variables: list[str], client: "anthropic.Anthropic",
+    grid: list[list], variables: list[str], puerto_llm: PuertoLLM,
 ) -> dict[str, dict]:
     if not variables:
         return {}
@@ -89,7 +83,7 @@ def pedir_segunda_lectura(
         v: {"nombre": METRICAS[v].nombre_humano, "definicion": METRICAS[v].definicion}
         for v in variables if v in METRICAS
     }
-    respuesta = client.messages.create(
+    texto = puerto_llm.preguntar(
         model=MODEL,
         max_tokens=1500,
         thinking={"type": "disabled"},
@@ -99,12 +93,12 @@ def pedir_segunda_lectura(
             "content": json.dumps({"grid": grid, "variables": definiciones}, ensure_ascii=False, default=str),
         }],
     )
-    payload = extraer_json(respuesta)
+    payload = extraer_json_de_texto(texto)
     return {item["variable"]: item for item in payload.get("lecturas", []) if "variable" in item}
 
 
 def pedir_segunda_lectura_imagen(
-    path: str, variables: list[str], client: "anthropic.Anthropic",
+    path: str, variables: list[str], puerto_llm: PuertoLLM,
 ) -> dict[str, dict]:
     """
     Segunda lectura para variables de origen "migracion_foto" (Bug #2). El
@@ -125,7 +119,7 @@ def pedir_segunda_lectura_imagen(
     """
     if not variables:
         return {}
-    relectura = vision_parser.parsear_imagen(path, client)
+    relectura = vision_parser.parsear_imagen(path, puerto_llm)
     return {
         var: {"variable": var, "valor": vv.valor, "confianza": vv.confianza}
         for var, vv in relectura.items() if var in variables

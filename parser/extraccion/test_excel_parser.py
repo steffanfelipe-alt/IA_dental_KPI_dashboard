@@ -9,7 +9,6 @@ aplicar_mapeo() no debe guardar un escalar para una variable tipo dict.
 import json
 import tempfile
 from pathlib import Path
-from types import SimpleNamespace
 
 import pandas as pd
 
@@ -562,15 +561,16 @@ def test_fusionar_ledger_sin_existente_devuelve_el_nuevo():
     assert _fusionar_ledger(None, nuevo) == nuevo
 
 
-class _RespuestaFalsa:
-    def __init__(self, payload: dict):
-        self.content = [SimpleNamespace(type="text", text=json.dumps(payload))]
-        self.stop_reason = "end_turn"
+class _PuertoLLMFalso:
+    """Fake de PuertoLLM: .preguntar(...) devuelve directamente el texto
+    (JSON serializado) que excel_parser espera, sin pasar por
+    anthropic.Anthropic ni por client.messages.create."""
 
-
-class _ClienteFalso:
     def __init__(self, payload: dict):
-        self.messages = SimpleNamespace(create=lambda **kwargs: _RespuestaFalsa(payload))
+        self._texto = json.dumps(payload)
+
+    def preguntar(self, **kwargs) -> str:
+        return self._texto
 
 
 def _csv_temporal(contenido: str) -> str:
@@ -599,7 +599,7 @@ def test_parsear_excel_end_to_end_arma_ledger_con_mapeo_vacio():
             "eventos": [{"tipo_evento": "pago", "columna_monto_index": 2, "columna_tratamiento_index": 3, "confianza": 0.85}],
         },
     }]}
-    variables, _ = parsear_excel(path, client=_ClienteFalso(payload))
+    variables, _ = parsear_excel(path, _PuertoLLMFalso(payload))
     ledger = variables["ledger_pacientes"].valor
     assert set(ledger.keys()) == {"P1001", "P1002"}
     assert len(ledger["P1001"]) == 2
@@ -623,7 +623,7 @@ def test_parsear_excel_ledger_y_mapeo_normal_conviven_en_la_misma_hoja():
             "eventos": [{"tipo_evento": "pago", "columna_monto_index": 2}],
         },
     }]}
-    variables, _ = parsear_excel(path, client=_ClienteFalso(payload))
+    variables, _ = parsear_excel(path, _PuertoLLMFalso(payload))
     assert variables["monto_cobrado"].valor == 80000.0
     assert set(variables["ledger_pacientes"].valor.keys()) == {"P1001", "P1002"}
     Path(path).unlink()

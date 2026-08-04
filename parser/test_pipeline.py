@@ -1,7 +1,7 @@
 """
 test_pipeline.py
 
-Sin pytest: corre con `python3 test_pipeline.py`.
+Sin pytest: corre con `python -m parser.test_pipeline`.
 Cubre el enhebrado de RegistroClientes (Fase 2) a través de
 pipeline.extraer_archivo/procesar_migracion: que solo se le pase a
 extractores que lo declaran en su firma, que un mismo registro se
@@ -12,9 +12,9 @@ Usa extractores falsos (no llama a la API real) para poder probar el
 enhebrado de parámetros de forma determinista.
 """
 
-import pipeline
-from coverage import VariableValue
-from matching import RegistroClientes
+from parser import pipeline
+from parser.cobertura_calidad.coverage import VariableValue
+from parser.pacientes.matching import RegistroClientes
 
 
 def _restaurar_extractores(original):
@@ -320,7 +320,7 @@ def test_dos_archivos_con_ledger_se_fusionan_en_vez_de_generar_conflicto():
 # ---------------------------------------------------------------------------
 
 def test_pregunta_valores_distintos_nombra_los_valores_y_archivos():
-    from conflictos import resolver_conflictos
+    from parser.cobertura_calidad.conflictos import resolver_conflictos
     fuentes = [
         {"no_shows": VariableValue(56, "migracion_excel", 0.8, archivo_origen="a.xlsx")},
         {"no_shows": VariableValue(60, "migracion_excel", 0.75, archivo_origen="b.xlsx")},

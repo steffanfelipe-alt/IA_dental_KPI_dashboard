@@ -38,42 +38,42 @@ jobs:
         continue-on-error: true
         run: ruff check parser
 
-      # OFFLINE test allowlist (explicit, not a glob). Each parser/test_*.py is a
-      # standalone runner (no pytest): a nonzero exit means a test failed.
-      # `set -e` stops the job at the first failing test.
+      # OFFLINE test allowlist (explicit, not a glob). Each parser/**/test_*.py is a
+      # standalone runner (no pytest), invoked as a package module: a nonzero
+      # exit means a test failed. `set -e` stops the job at the first failing test.
       - name: Run offline test suite
         run: |
           set -euo pipefail
           tests=(
-            parser/test_agregados.py
-            parser/test_benchmarks.py
-            parser/test_calidad.py
-            parser/test_catalogo_tecnologico.py
-            parser/test_conflictos.py
-            parser/test_coverage.py
-            parser/test_cruces.py
-            parser/test_cruces_propuestos.py
-            parser/test_derivacion.py
-            parser/test_diagnostico.py
-            parser/test_evals_diagnostico.py
-            parser/test_excel_parser.py
-            parser/test_explicaciones.py
-            parser/test_formato.py
-            parser/test_interpretacion.py
-            parser/test_ledger.py
-            parser/test_matching.py
-            parser/test_metricas_paciente.py
-            parser/test_periodos.py
-            parser/test_pipeline.py
-            parser/test_priorizacion_extendida.py
-            parser/test_reconciliacion.py
-            parser/test_segunda_lectura.py
-            parser/test_trazabilidad.py
-            parser/test_validacion.py
-            parser/test_vision_parser.py
+            parser.cobertura_calidad.test_agregados
+            parser.diagnostico.test_benchmarks
+            parser.diagnostico.test_calidad
+            parser.catalogo.test_catalogo_tecnologico
+            parser.cobertura_calidad.test_conflictos
+            parser.cobertura_calidad.test_coverage
+            parser.catalogo.test_cruces
+            parser.catalogo.test_cruces_propuestos
+            parser.cobertura_calidad.test_derivacion
+            parser.diagnostico.test_diagnostico
+            parser.diagnostico.test_evals_diagnostico
+            parser.extraccion.test_excel_parser
+            parser.interpretacion.test_explicaciones
+            parser.vocabulario.test_formato
+            parser.interpretacion.test_interpretacion
+            parser.pacientes.test_ledger
+            parser.pacientes.test_matching
+            parser.pacientes.test_metricas_paciente
+            parser.vocabulario.test_periodos
+            parser.test_pipeline
+            parser.diagnostico.test_priorizacion_extendida
+            parser.cobertura_calidad.test_reconciliacion
+            parser.extraccion.test_segunda_lectura
+            parser.cobertura_calidad.test_trazabilidad
+            parser.cobertura_calidad.test_validacion
+            parser.extraccion.test_vision_parser
           )
           for t in "${tests[@]}"; do
             echo "::group::$t"
-            python "$t"
+            python -m "$t"
             echo "::endgroup::"
           done

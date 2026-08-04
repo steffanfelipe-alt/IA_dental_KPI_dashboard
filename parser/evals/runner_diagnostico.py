@@ -21,18 +21,13 @@ anonimizados + diagnóstico de un experto humano) — ver el docstring de
 casos_diagnostico.py.
 
 Uso:
-    python3 runner_diagnostico.py
+    python -m parser.evals.runner_diagnostico
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import casos_diagnostico as datos  # noqa: E402
-from catalogo_tecnologico import mapear_oportunidades  # noqa: E402
-from diagnostico import diagnosticar  # noqa: E402
-from priorizacion import priorizar_oportunidades  # noqa: E402
+from parser.catalogo.catalogo_tecnologico import mapear_oportunidades
+from parser.diagnostico.diagnostico import diagnosticar
+from parser.diagnostico.priorizacion import priorizar_oportunidades
+from parser.evals import casos_diagnostico as datos
 
 UMBRAL_ACCIONABLE = 0.6
 

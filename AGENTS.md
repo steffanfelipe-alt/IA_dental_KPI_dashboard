@@ -3,7 +3,7 @@
 ## Stack tecnológico
 
 - **Python 3.12** (venv local en 3.12.13). El código usa sintaxis 3.10+ (`X | None`, `int | float`), no corre en 3.9.
-- **anthropic 0.120.0** — API de Claude. `MODEL = "claude-sonnet-5"` (constante duplicada por módulo, no compartida: `extractors/excel_parser.py`, `extractors/vision_parser.py`, `interpretacion.py`, `segunda_lectura.py`, `cruces_propuestos.py`). `interpretacion.MODEL_INFORME = "claude-opus-5"` es la ÚNICA llamada en Opus, solo para `interpretar_clinica`.
+- **anthropic 0.120.0** — API de Claude. `MODEL = "claude-sonnet-5"` (constante duplicada por módulo, no compartida: `extraccion/excel_parser.py`, `extraccion/vision_parser.py`, `interpretacion.py`, `segunda_lectura.py`, `cruces_propuestos.py`). `interpretacion.MODEL_INFORME = "claude-opus-5"` es la ÚNICA llamada en Opus, solo para `interpretar_clinica`.
 - **pandas 3.0.5 + openpyxl 3.1.5 + xlrd 2.0.2** — lectura de Excel/CSV.
 - **rapidfuzz 3.14.5** con fallback a `difflib` si no está instalada — matching de nombres de pacientes.
 - **streamlit 1.60.0** — solo `probar_manual.py` (harness de prueba, NO el producto).
@@ -54,45 +54,24 @@
 ## Estructura de proyecto
 
 ```
-parser/                          Motor de KPIs — casi todo el código real del repo
-  schema.py                      Vocabulario de ~30 variables + las 21 fórmulas de KPI (núcleo)
-  coverage.py                    Cobertura por variable + priorización de preguntas del wizard
-  conflictos.py                  Resolución de conflictos entre archivos/migraciones
-  pipeline.py                    Orquestador — punto de entrada único (procesar_migracion)
-  validacion.py                  Guardas de tipo/forma/origen (mensajes ligados a tests, no tocar)
-  reconciliacion.py               Compara KPI recalculado contra la tasa ya declarada en la planilla
-  derivacion.py                  Completa una variable despejándola de una tasa declarada
-  segunda_lectura.py             Segunda opinión de Claude sin contexto, para confianza baja
-  claude_utils.py                Helpers de lectura de respuesta de Claude (thinking, truncado)
-  extractors/
-    excel_parser.py              Excel/CSV: pandas lee crudo, Claude mapea columnas, código calcula
-    vision_parser.py             Fotos/PDF: Claude Vision lee y mapea; declara thinking disabled
-    __init__.py                  Vacío (los módulos se importan por ruta completa)
-  cruces.py                      Métricas derivadas deterministas (embudo + álgebra de unidades)
-  cruces_propuestos.py           Capa 3: Claude propone qué cruzar, el código calcula y valida
-  calidad.py                     Data Quality Report (completitud/consistencia/confianza)
-  agregados.py                   Promedio/mediana/outliers sobre una serie
-  formato.py                     Formatea un valor según su unidad para la UI
-  trazabilidad.py                Lineage: de qué celda/fórmula/conversión salió cada valor
-  periodos.py                    Normaliza etiquetas de período a clave canónica ("2026-04")
-  matching.py                    Identidad de pacientes (rapidfuzz + banda gris, nunca fusiona sola)
-  ledger.py                      Arma ledger_pacientes desde una hoja transaccional
-  metricas_paciente.py           17 métricas de riesgo/valor/ciclo de vida sobre el ledger
-  diagnostico.py                 Diagnostic Engine determinista (estado, patrones, contradicciones)
-  catalogo_tecnologico.py        ~35 intervenciones de Agencia IA, indexadas por etapa del funnel
-  priorizacion.py                Score = gap × impacto × factor_confiabilidad × addressability × suficiencia
-  estacionalidad.py              Estacionalidad de Mar del Plata como dato estructurado
-  contexto_cualitativo.py        Preguntas cualitativas por KPI (separado para romper ciclo de import)
-  preguntas_wizard.py            Texto exacto de la pregunta que ve el dueño por variable faltante
-  interpretacion.py              3 entry points: interpretar_kpi / _panel / _clinica (este último en Opus)
-  explicaciones.py               Traduce motivos técnicos a lenguaje de dueño de clínica
-  benchmarks.py                  13 benchmarks argentinos + cálculo de gap (mejor_es/confiabilidad)
-  aranceles_com.py               Arancel del Círculo Odontológico de Mar del Plata (unidad "consulta")
-  referencias/                   Research de benchmarks (fuente de benchmarks.py)
+parser/                          Motor de KPIs — casi todo el código real del repo (paquete Python real)
+  __init__.py                    Vacío — parser es un paquete, todos los imports internos son absolutos
+  vocabulario/                   Vocabulario compartido: schema.py, formato.py, periodos.py, claude_utils.py
+  extraccion/                    excel_parser.py, vision_parser.py, segunda_lectura.py
+  pacientes/                     matching.py, ledger.py, metricas_paciente.py
+  cobertura_calidad/             coverage.py, agregados.py, preguntas_wizard.py, trazabilidad.py,
+                                  validacion.py, conflictos.py, reconciliacion.py, derivacion.py
+  diagnostico/                   diagnostico.py, calidad.py, contexto_cualitativo.py, estacionalidad.py,
+                                  benchmarks.py, aranceles_com.py, priorizacion.py
+  catalogo/                      catalogo_tecnologico.py, cruces.py, cruces_propuestos.py
+  interpretacion/                interpretacion.py, explicaciones.py
+  referencias/                   Research de benchmarks (fuente de diagnostico/benchmarks.py)
   datos_clinica_real/            Datos reales — gitignored, NO TOCAR (ver Prohibiciones)
-  evals/                         Casos dorados + runners contra la API real (NO es la suite de tests)
-  test_*.py                      26 archivos, 363 tests deterministas, sin pytest, uno por módulo
-  probar_manual.py               Harness Streamlit — NO es el producto
+  evals/                         Paquete real. Casos dorados + runners contra la API real (NO es la suite de tests)
+  test_*.py (por dominio)        26 archivos, 363 tests deterministas, sin pytest, uno por módulo,
+                                  junto a su módulo en la subcarpeta correspondiente
+  pipeline.py                    Orquestador — punto de entrada único (procesar_migracion), composition root
+  probar_manual.py               Harness Streamlit — NO es el producto, composition root
   README.md                      Documentación fase por fase — mantener sincronizada con el código
 README.md                        Estado real auditado del proyecto
 plan_maestro_benchmarks_interpretacion.md / plan_resolucion_conflictos.md   Planes ya ejecutados
@@ -107,14 +86,15 @@ CHECKLIST_PROXIMO.md / PROXIMOS_PASOS_TESTING.md   Notas de trabajo pendiente
 
 ## Testing, CI/CD
 
-- **CI en `.github/workflows/ci.yml`** (desde 2026-07-31): cada PR/push a `main` corre `ruff check parser` (informativo, no bloqueante) + los 26 tests offline. El job se llama `test` y es el check requerido para mergear. `tests-api.yml` es manual (`workflow_dispatch`) y corre `parser/evals/runner.py` contra la API real (consume créditos). `release-please.yml` maneja el versionado automático.
-- **363 tests en 26 archivos `test_*.py`** dentro de `parser/`, uno por módulo, **sin pytest**. Cada archivo corre standalone:
+- **CI en `.github/workflows/ci.yml`** (desde 2026-07-31): cada PR/push a `main` corre `ruff check parser` (informativo, no bloqueante) + los 26 tests offline. El job se llama `test` y es el check requerido para mergear. `tests-api.yml` es manual (`workflow_dispatch`) y corre `python -m parser.evals.runner` contra la API real (consume créditos). `release-please.yml` maneja el versionado automático.
+- **363 tests en 26 archivos `test_*.py`** dentro de `parser/` (uno por módulo, cada uno junto a su módulo en la subcarpeta de dominio), **sin pytest**. Cada archivo corre como módulo del paquete desde la raíz del repo:
   ```
-  python3 test_pipeline.py
+  python -m parser.test_pipeline
+  python -m parser.cobertura_calidad.test_conflictos
   ```
   con el patrón al final: `tests = [v for k,v in list(globals().items()) if k.startswith("test_")]`, itera, llama `test()`, imprime `OK  {nombre}` y el conteo total.
 - Tests deterministas, sin red — los módulos que llaman a Claude reciben `client=None` (devuelve el payload crudo) o un cliente falso (`_ClienteFalso`/`SimpleNamespace(create=...)` que captura la última llamada).
-- **`parser/evals/` es aparte**: `runner.py` corre el pipeline contra la API real de Claude (necesita `ANTHROPIC_API_KEY`) y compara contra valores dorados con tolerancia porcentual (`_cerca`, 0.5% default) — reporte de precisión, no pass/fail. `runner_diagnostico.py` es determinista y `test_evals_diagnostico.py` lo mete en la suite normal.
+- **`parser/evals/` es aparte**: `python -m parser.evals.runner` corre el pipeline contra la API real de Claude (necesita `ANTHROPIC_API_KEY`) y compara contra valores dorados con tolerancia porcentual (`_cerca`, 0.5% default) — reporte de precisión, no pass/fail. `runner_diagnostico.py` es determinista y `test_evals_diagnostico.py` lo mete en la suite normal.
 - Sin coverage mínimo formal — la métrica trackeada es el conteo de tests verdes (363 al 2026-07-30), reportado en cada actualización de README.
 
 ## Estilo de commits y PRs

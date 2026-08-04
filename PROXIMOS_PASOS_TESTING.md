@@ -35,7 +35,7 @@ ni forma de revertir un cambio malo.
    `excel_parser.py`, `vision_parser.py` e `interpretacion.interpretar_kpi`
    no pueden llamar a Claude.
 4. **Revisar el placeholder de modelo.** `MODEL = "claude-sonnet-4-6"` en
-   `extractors/excel_parser.py`, `extractors/vision_parser.py` e
+   `extraccion/excel_parser.py`, `extraccion/vision_parser.py` e
    `interpretacion.py` no es un model id real — hay que reemplazarlo por
    uno vigente antes de probar (`claude-sonnet-5`) o la primera llamada
    real va a fallar.

@@ -13,7 +13,7 @@ cuenta correcta sin la fila TOTAL/Prom. — sirve para verificar que esa fila
 no se está mezclando en ningún promedio (el bug real de la Fase 1.1).
 """
 
-from generar_fixtures import (
+from parser.evals.generar_fixtures import (
     ASISTEN,
     CONSULTAS_NUEVAS,
     COBRADO,

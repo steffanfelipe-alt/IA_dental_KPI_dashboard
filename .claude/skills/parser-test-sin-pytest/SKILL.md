@@ -14,12 +14,12 @@ corre standalone. Introducir pytest o un fixture de pytest rompe la convención 
 """
 test_<modulo>.py
 
-Sin pytest: corre con `python3 test_<modulo>.py`.
+Sin pytest: corre con `python -m parser.<dominio>.test_<modulo>` desde la raíz del repo.
 Cubre <qué fase/hallazgo> — <una línea de por qué existe>.
 [Decir si llama a la API real o no. La regla es: NO, se inyecta un cliente falso.]
 """
 
-from <modulo> import <lo_que_se_prueba>
+from parser.<dominio>.<modulo> import <lo_que_se_prueba>
 
 
 def test_nombre_largo_y_descriptivo_en_espanol_que_dice_el_caso():
@@ -55,16 +55,26 @@ if __name__ == "__main__":
 
 ## Correr
 
+Desde la raíz del repo, como módulo del paquete (no como script suelto):
+
 ```
-python3 test_<modulo>.py
+python -m parser.<dominio>.test_<modulo>
 ```
+
+Ej.: `python -m parser.cobertura_calidad.test_conflictos`,
+`python -m parser.pacientes.test_matching`. `<dominio>` es la subcarpeta de
+Screaming Architecture donde vive el módulo (`vocabulario/`, `extraccion/`,
+`pacientes/`, `cobertura_calidad/`, `diagnostico/`, `catalogo/`,
+`interpretacion/`) — `test_pipeline.py` es la excepción y corre como
+`python -m parser.test_pipeline` porque `pipeline.py` vive directo en `parser/`.
 
 Imprime `OK  <nombre>` por test y el total. Verde = todos pasaron. Reportar el conteo nuevo si
 actualizás el README (la métrica trackeada es el total de tests verdes).
 
 ## Para evals (aparte de los tests)
 
-`evals/` SÍ llama a la API real (`runner.py`) y compara contra valores dorados con tolerancia
-porcentual (`_cerca`, 0.5%). Si agregás un caso dorado, mantené la fuente única de verdad:
-`generar_fixtures.py` y `casos_dorados.py` derivan de los mismos arrays, no los desincronices.
-`runner_diagnostico.py` es determinista y ya entra a la suite vía `test_evals_diagnostico.py`.
+`evals/` SÍ llama a la API real (`python -m parser.evals.runner`) y compara contra valores
+dorados con tolerancia porcentual (`_cerca`, 0.5%). Si agregás un caso dorado, mantené la
+fuente única de verdad: `generar_fixtures.py` y `casos_dorados.py` derivan de los mismos
+arrays, no los desincronices. `runner_diagnostico.py` es determinista y ya entra a la suite
+vía `test_evals_diagnostico.py`.

@@ -12,19 +12,17 @@ validación + reconciliación) del valor correcto, y sirve para medir
 progreso fase a fase del plan de confiabilidad.
 
 Uso:
-    python3 runner.py            # una corrida
-    python3 runner.py --repetir 5   # corre 5 veces, mide determinismo también
+    python -m parser.evals.runner            # una corrida
+    python -m parser.evals.runner --repetir 5   # corre 5 veces, mide determinismo también
 """
 
 import argparse
 import os
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from dotenv import load_dotenv
 
-import casos_dorados as dorado  # noqa: E402
-from dotenv import load_dotenv  # noqa: E402
+from parser.evals import casos_dorados as dorado
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 XLSX = str(FIXTURES_DIR / "clinica_demo_metricas.xlsx")
@@ -46,7 +44,7 @@ def _cerca(a, b, tolerancia_pct=TOLERANCIA_PCT) -> bool:
 
 
 def _correr_una_vez(client) -> dict:
-    from pipeline import procesar_migracion
+    from parser.pipeline import procesar_migracion
     return procesar_migracion([XLSX, CSV], client=client)
 
 

@@ -6,9 +6,9 @@ mismo módulo, los datos crudos de los que salen — así el valor esperado
 en un caso dorado nunca puede desincronizarse del archivo que lo genera
 (un solo lugar define "la verdad").
 
-Correr con `python3 generar_fixtures.py` desde parser/evals/ para
-regenerar los .xlsx/.csv en fixtures/ (no hace falta correrlo salvo que
-se cambien los datos de acá — los archivos generados quedan versionados).
+Correr con `python -m parser.evals.generar_fixtures` desde la raíz del repo
+para regenerar los .xlsx/.csv en fixtures/ (no hace falta correrlo salvo
+que se cambien los datos de acá — los archivos generados quedan versionados).
 
 Reproduce a propósito los patrones reales que rompían el parser:
 - una hoja "Resumen mensual" con una fila TOTAL/Prom. después de los

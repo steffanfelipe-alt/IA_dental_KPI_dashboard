@@ -23,22 +23,22 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Optional
 
-from schema import KPI_BY_ID
-from calidad import evaluar_calidad
-from catalogo_tecnologico import mapear_oportunidades
-from cruces import generar_cruces
-from coverage import VariableValue, evaluar_cobertura, variables_para_wizard
-from conflictos import fusionar_candidatos, resolver_conflictos
-from diagnostico import diagnosticar
-from matching import RegistroClientes
-from priorizacion import priorizar_oportunidades
-from validacion import validar_variable, validar_identidades
-from reconciliacion import reconciliar
-from derivacion import derivar_variables_faltantes
-import segunda_lectura
-import metricas_paciente
-from explicaciones import nombre_humano
-from extractors import excel_parser, vision_parser
+from parser.vocabulario.schema import KPI_BY_ID
+from parser.diagnostico.calidad import evaluar_calidad
+from parser.catalogo.catalogo_tecnologico import mapear_oportunidades
+from parser.catalogo.cruces import generar_cruces
+from parser.cobertura_calidad.coverage import VariableValue, evaluar_cobertura, variables_para_wizard
+from parser.cobertura_calidad.conflictos import fusionar_candidatos, resolver_conflictos
+from parser.diagnostico.diagnostico import diagnosticar
+from parser.pacientes.matching import RegistroClientes
+from parser.diagnostico.priorizacion import priorizar_oportunidades
+from parser.cobertura_calidad.validacion import validar_variable, validar_identidades
+from parser.cobertura_calidad.reconciliacion import reconciliar
+from parser.cobertura_calidad.derivacion import derivar_variables_faltantes
+from parser.extraccion import segunda_lectura
+from parser.pacientes import metricas_paciente
+from parser.interpretacion.explicaciones import nombre_humano
+from parser.extraccion import excel_parser, vision_parser
 
 
 EXTRACTOR_POR_EXTENSION = {

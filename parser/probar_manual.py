@@ -34,12 +34,12 @@ from typing import Optional
 import streamlit as st
 from dotenv import load_dotenv
 
-from pipeline import EXTRACTOR_POR_EXTENSION, procesar_migracion, resolver_conflicto
-from interpretacion import interpretar_clinica, interpretar_kpi, interpretar_panel
-from cruces_propuestos import proponer_cruces
-from formato import fmt_ars, fmt_por_unidad
-from schema import KPI_BY_ID
-from explicaciones import explicar_cuarentena, explicar_derivada, explicar_discrepancia, nombre_humano
+from parser.pipeline import EXTRACTOR_POR_EXTENSION, procesar_migracion, resolver_conflicto
+from parser.interpretacion.interpretacion import interpretar_clinica, interpretar_kpi, interpretar_panel
+from parser.catalogo.cruces_propuestos import proponer_cruces
+from parser.vocabulario.formato import fmt_ars, fmt_por_unidad
+from parser.vocabulario.schema import KPI_BY_ID
+from parser.interpretacion.explicaciones import explicar_cuarentena, explicar_derivada, explicar_discrepancia, nombre_humano
 
 try:
     import anthropic

@@ -11,7 +11,7 @@ Contenido de esta entrega:
   (`schema.py`), chequeo de cobertura por variable (`coverage.py`),
   resolución de conflictos de migración (`conflictos.py`), preguntas
   reales del wizard (`preguntas_wizard.py`), orquestador (`pipeline.py`),
-  los dos extractores (`extractors/`), la estructura de benchmarks
+  los dos extractores (`extraccion/`), la estructura de benchmarks
   argentinos ya cargada (`benchmarks.py` + `aranceles_com.py`), el cruce
   de benchmark + contexto cualitativo (`interpretacion.py`), el motor de
   priorización (`priorizacion.py`), el Diagnostic Engine

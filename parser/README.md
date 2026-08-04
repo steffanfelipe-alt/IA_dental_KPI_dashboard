@@ -8,64 +8,78 @@ una vez por variable, nunca una vez por KPI.
 
 ## Estructura
 
-32 módulos (30 de primer nivel + 2 extractores), agrupados por función:
+32 módulos agrupados por dominio (Screaming Architecture) en subcarpetas de
+`parser/`, cada una un paquete Python real (`__init__.py` + imports absolutos
+`parser.<dominio>.<modulo>`). Cada `test_X.py` vive junto a su `X.py`:
 
 ```
-# Núcleo
-schema.py                    Vocabulario de ~28 variables + las 21 fórmulas de KPIs
-coverage.py                  Chequeo de cobertura por variable + priorización del wizard
-conflictos.py                Resolución de conflictos entre archivos/migraciones
-pipeline.py                  Orquestador: punto de entrada único (procesar_migracion)
-validacion.py                Guardas de tipo/forma/origen sobre cada variable extraída
-reconciliacion.py            Compara el KPI recalculado contra la tasa que la planilla ya declaraba
-derivacion.py                Completa una variable ausente despejándola de una tasa declarada
-segunda_lectura.py           Segunda opinión de Claude, sin contexto del primer mapeo, para confianza baja
+parser/
+  __init__.py
 
-# Extractores
-extractors/
-  excel_parser.py            Excel/CSV -> Claude mapea columnas ambiguas al vocabulario
-  vision_parser.py           Fotos/PDF -> Claude Vision lee y mapea en un solo paso
-claude_utils.py              Helpers compartidos: extraer_texto (saltea bloques de thinking)
+  vocabulario/                 Vocabulario compartido (kernel)
+    schema.py                  ~28 variables + las 21 fórmulas de KPIs
+    formato.py                 Formatea un valor según su unidad (ARS, %, horas) para la UI
+    periodos.py                Normaliza etiquetas de período a clave canónica ("2026-04")
+    claude_utils.py            Helpers compartidos: extraer_texto (saltea bloques de thinking)
 
-# Cruces y calidad del dato
-cruces.py                    Métricas derivadas fuera de las 21 KPIFormula (embudo + álgebra de unidades)
-cruces_propuestos.py         El modelo propone qué cruzar; nunca calcula el número
-calidad.py                   Data Quality Report: completitud/consistencia/confianza + suficiencia_datos
-agregados.py                 Promedio/mediana/suma sobre una serie ya extraída + detección de outliers
-formato.py                   Formatea un valor según su unidad (ARS, %, horas) para la UI
+  extraccion/                  Extractores + segunda opinión
+    excel_parser.py            Excel/CSV -> Claude mapea columnas ambiguas al vocabulario
+    vision_parser.py           Fotos/PDF -> Claude Vision lee y mapea en un solo paso
+    segunda_lectura.py         Segunda opinión de Claude, sin contexto del primer mapeo, para confianza baja
 
-# Trazabilidad e identidad
-trazabilidad.py               Lineage: de qué celda/fórmula salió cada valor (ver explicar())
-periodos.py                   Normaliza etiquetas de período a clave canónica ("2026-04")
-matching.py                   Resolución de identidad de pacientes (fuzzy matching + banda gris)
-ledger.py                     Arma ledger_pacientes a partir de una hoja transaccional real
-metricas_paciente.py          17 métricas de riesgo/valor/ciclo de vida/atribución sobre el ledger
+  pacientes/                   Identidad y ledger de pacientes
+    matching.py                Resolución de identidad de pacientes (fuzzy matching + banda gris)
+    ledger.py                  Arma ledger_pacientes a partir de una hoja transaccional real
+    metricas_paciente.py       17 métricas de riesgo/valor/ciclo de vida/atribución sobre el ledger
 
-# Diagnóstico y catálogo
-diagnostico.py                Diagnostic Engine: estado de evidencia, patrones cruzados, contradicciones
-catalogo_tecnologico.py       ~35 intervenciones reales de Agencia IA, indexadas por etapa del funnel
-priorizacion.py               Motor de priorización: score = gap × impacto × factor_confiabilidad
-estacionalidad.py             Estacionalidad de Mar del Plata como dato estructurado (proxy sobre P51)
-contexto_cualitativo.py       Preguntas cualitativas por KPI (extraído de interpretacion.py)
-preguntas_wizard.py           Texto exacto de la pregunta que ve el dueño por cada variable faltante
+  cobertura_calidad/           Cobertura, conflictos, trazabilidad y validación
+    coverage.py                Chequeo de cobertura por variable + priorización del wizard
+    agregados.py                Promedio/mediana/suma sobre una serie ya extraída + detección de outliers
+    preguntas_wizard.py         Texto exacto de la pregunta que ve el dueño por cada variable faltante
+    trazabilidad.py             Lineage: de qué celda/fórmula salió cada valor (ver explicar())
+    validacion.py                Guardas de tipo/forma/origen sobre cada variable extraída
+    conflictos.py                Resolución de conflictos entre archivos/migraciones
+    reconciliacion.py            Compara el KPI recalculado contra la tasa que la planilla ya declaraba
+    derivacion.py                Completa una variable ausente despejándola de una tasa declarada
 
-# Interpretación y explicación
-interpretacion.py             Cruza gap + contexto cualitativo -> interpretación del asistente
-explicaciones.py              Traduce motivos técnicos (cuarentena/derivada/reconciliación) a lenguaje llano
+  diagnostico/                 Diagnostic Engine + benchmarks
+    diagnostico.py              Diagnostic Engine: estado de evidencia, patrones cruzados, contradicciones
+    calidad.py                  Data Quality Report: completitud/consistencia/confianza + suficiencia_datos
+    contexto_cualitativo.py     Preguntas cualitativas por KPI (rompe el ciclo diagnostico<->interpretacion)
+    estacionalidad.py           Estacionalidad de Mar del Plata como dato estructurado (proxy sobre P51)
+    benchmarks.py                13 benchmarks argentinos por KPI + cálculo de gap (ver más abajo)
+    aranceles_com.py             Arancel del Círculo Odontológico de Mar del Plata (unidad "consulta")
+    priorizacion.py              Motor de priorización: score = gap × impacto × factor_confiabilidad
 
-# Benchmarks
-benchmarks.py                 13 benchmarks argentinos por KPI + cálculo de gap (ver más abajo)
-aranceles_com.py              Arancel del Círculo Odontológico de Mar del Plata (unidad "consulta")
-referencias/
-  benchmarks_research_AR.md   Research completo de benchmarks (fuente de benchmarks.py)
+  catalogo/                    Catálogo tecnológico y cruces dimensionales
+    catalogo_tecnologico.py     ~35 intervenciones reales de Agencia IA, indexadas por etapa del funnel
+    cruces.py                   Métricas derivadas fuera de las 21 KPIFormula (embudo + álgebra de unidades)
+    cruces_propuestos.py        El modelo propone qué cruzar; nunca calcula el número
 
-# Harness de prueba (no es el producto — ver nota más abajo)
-probar_manual.py              Streamlit: sube archivos, corre pipeline.py, muestra cada sección del payload
+  interpretacion/              Interpretación y explicación para el asistente
+    interpretacion.py           Cruza gap + contexto cualitativo -> interpretación del asistente
+    explicaciones.py            Traduce motivos técnicos (cuarentena/derivada/reconciliación) a lenguaje llano
 
-# evals/
-evals/
-  casos_diagnostico.py        Casos sintéticos para el Diagnostic Engine (ver nota de scope, §24)
-  runner_diagnostico.py       Precisión de cuello de botella, falsos diagnósticos, % accionables
+  evals/                       Harness de evaluación (paquete real)
+    casos_diagnostico.py        Casos sintéticos para el Diagnostic Engine (ver nota de scope, §24)
+    casos_dorados.py            Valores dorados verificados a mano contra el fixture real
+    generar_fixtures.py         Genera los .xlsx/.csv de fixtures/
+    runner.py                   Corre el pipeline real contra la API de Claude (manual/tests-api.yml)
+    runner_diagnostico.py       Precisión de cuello de botella, falsos diagnósticos, % accionables
+
+  referencias/
+    benchmarks_research_AR.md   Research completo de benchmarks (fuente de benchmarks.py)
+
+  # Composition root / driving adapter — no es lógica de dominio
+  pipeline.py                   Orquestador: punto de entrada único (procesar_migracion)
+  probar_manual.py              Streamlit: sube archivos, corre pipeline.py, muestra cada sección del payload
+```
+
+Convención de tests: cada `test_X.py` corre como módulo del paquete desde la
+raíz del repo, nunca como script:
+
+```
+python -m parser.<dominio>.test_x
 ```
 
 **`probar_manual.py` no es el producto.** Es el harness con el que se prueba
@@ -78,7 +92,7 @@ Streamlit — ver "Uso desde el endpoint de FastAPI" más abajo.
 ## Uso desde el endpoint de FastAPI
 
 ```python
-from pipeline import procesar_migracion
+from parser.pipeline import procesar_migracion
 
 @app.post("/onboarding/{clinica_id}/migrar")
 async def migrar_datos(clinica_id: str, archivos: list[UploadFile]):
@@ -120,7 +134,7 @@ cargar un tercer valor) — no es la misma UI que "completá este dato".
 Endpoint sugerido para resolver un conflicto (mismo patrón que el de arriba):
 
 ```python
-from pipeline import resolver_conflicto
+from parser.pipeline import resolver_conflicto
 
 @app.post("/onboarding/{clinica_id}/resolver-conflicto")
 async def resolver_conflicto_endpoint(clinica_id: str, body: dict):
@@ -148,13 +162,13 @@ archivo nuevo trae un valor distinto, se genera un `Conflicto` con
 `coverage.py`, `schema.py` y `conflictos.py` no dependen de Claude — son
 lógica pura sobre diccionarios de `VariableValue`. Se puede (y conviene)
 testear el motor de priorización con datos sintéticos antes de conectar
-los extractores reales. Corriendo `python3 test_conflictos.py` (sin
-pytest) se ven los casos de conflicto; para cobertura, un escenario manual
+los extractores reales. Corriendo `python -m parser.cobertura_calidad.test_conflictos`
+(sin pytest) se ven los casos de conflicto; para cobertura, un escenario manual
 con un conflicto sin resolver:
 
 ```python
-from coverage import VariableValue, evaluar_cobertura, variables_para_wizard
-from conflictos import resolver_conflictos
+from parser.cobertura_calidad.coverage import VariableValue, evaluar_cobertura, variables_para_wizard
+from parser.cobertura_calidad.conflictos import resolver_conflictos
 
 fuentes = [
     {"turnos_agendados": VariableValue(200, "migracion_excel", 0.9),
@@ -183,7 +197,7 @@ research completo (`referencias/benchmarks_research_AR.md`) encontró que
 tiene que ser honesto sobre eso en cada pantalla y cada respuesta.
 
 ```python
-from benchmarks import calcular_gap
+from parser.diagnostico.benchmarks import calcular_gap
 
 gap = calcular_gap(kpi_id=4, valor_clinica=28)  # no-show del 28%
 # Gap(direccion="por_encima", favorable=False, magnitud_pct=..., ...)
@@ -286,7 +300,7 @@ rankear por encima de un gap mediano contra un dato oficial.
   paciente, LTV real, concentración de ingresos, retención por cohorte,
   etc. — ver el docstring de `metricas_paciente.py` para la lista
   completa). **`ledger_pacientes` ya se arma en vivo** (Fase H):
-  `extractors/excel_parser.py` declara un bloque `"ledger"` en el
+  `extraccion/excel_parser.py` declara un bloque `"ledger"` en el
   `SYSTEM_PROMPT` para hojas `orientacion="transaccional"`, y
   `construir_ledger_pacientes` recibe `campo_es_id_estable: bool = False`
   — con `True`, bypassea `matching.py` por completo y usa el valor de la
@@ -437,7 +451,7 @@ problema real de "Juan Pérez" vs "J. Perez". Arreglo: parámetro nuevo
 `campo_es_id_estable: bool = False` — con `True`, bypassea `matching.py`
 por completo y usa el valor de la columna directo como `cliente_id`.
 
-**`ledger_pacientes` ya se arma en vivo.** `extractors/excel_parser.py`
+**`ledger_pacientes` ya se arma en vivo.** `extraccion/excel_parser.py`
 declara un bloque `"ledger"` en el `SYSTEM_PROMPT` para hojas
 `orientacion="transaccional"` (columna de paciente + si es un ID estable,
 fecha, tipo de evento por `ledger.TIPOS_EVENTO`, monto y tratamiento

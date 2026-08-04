@@ -39,11 +39,13 @@ Reglas concretas:
 
 ### La convención de tests de este repo (no negociable)
 
-Los tests son **standalone, sin pytest**. Cada módulo tiene su `parser/test_*.py`
-que se corre solo:
+Los tests son **standalone, sin pytest**. Cada módulo tiene su `test_*.py` junto
+a él, dentro de la subcarpeta de dominio (Screaming Architecture), y se corre
+como módulo del paquete desde la raíz del repo:
 
 ```
-python3 parser/test_pipeline.py
+python -m parser.test_pipeline
+python -m parser.cobertura_calidad.test_conflictos
 ```
 
 El patrón vive al final de cada archivo: junta todo lo que empieza con `test_`,
@@ -216,8 +218,8 @@ mano —justo lo que este flujo elimina—.
 Antes de abrir el Pull Request, verificá:
 
 - [ ] **Trabajás en una rama, no en `main`.** Nada de push directo a `main`.
-- [ ] **Los tests offline pasan localmente:** corriste los `parser/test_*.py`
-      afectados con `python3 parser/test_X.py` y están en verde.
+- [ ] **Los tests offline pasan localmente:** corriste los `test_*.py`
+      afectados con `python -m parser.<dominio>.test_X` y están en verde.
 - [ ] **El cambio de comportamiento tiene test.** Si cambiaste lógica de negocio
       o un edge case, hay un test que lo cubre — y entendés por qué pasa.
 - [ ] **No introdujiste pytest** ni ninguna dependencia que rompa la convención

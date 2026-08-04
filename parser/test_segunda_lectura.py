@@ -7,6 +7,8 @@ la forma de una respuesta de Anthropic): corre con
 """
 
 import json
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 from coverage import VariableValue
@@ -14,6 +16,7 @@ from segunda_lectura import (
     UMBRAL_CONFIANZA_BAJA,
     contrastar,
     pedir_segunda_lectura,
+    pedir_segunda_lectura_imagen,
     variables_a_verificar,
 )
 
@@ -73,6 +76,70 @@ def test_contrastar_no_coincide_genera_discrepancia():
     confianza_actualizada, discrepancias = contrastar(variables, lecturas)
     assert confianza_actualizada == {}
     assert discrepancias["no_shows"]["segunda_lectura"] == 16
+
+
+# ---------------------------------------------------------------------------
+# Bug #2 (E2E): una variable de origen migracion_foto no tiene grid de Excel
+# para releer — pedir_segunda_lectura_imagen hace una relectura CIEGA de la
+# imagen entera (sin contexto del primer mapeo) vía vision_parser.parsear_imagen
+# y normaliza el resultado al mismo contrato {variable: {valor, confianza}}
+# que ya devuelve pedir_segunda_lectura.
+# ---------------------------------------------------------------------------
+
+class _ClienteFalsoImagen:
+    """Mismo patrón que test_vision_parser.py: cliente falso que responde
+    con `payload` sin llamar a la API real, capturando la llamada."""
+
+    def __init__(self, payload: dict):
+        self._payload = payload
+        self.ultima_llamada = None
+        self.messages = SimpleNamespace(create=self._create)
+
+    def _create(self, **kwargs):
+        self.ultima_llamada = kwargs
+        return _RespuestaFalsa(self._payload)
+
+
+def _archivo_temporal_imagen():
+    f = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+    f.write(b"contenido-falso-no-es-una-imagen-real")
+    f.close()
+    return f.name
+
+
+def test_pedir_segunda_lectura_imagen_normaliza_al_contrato_de_lectura():
+    path = _archivo_temporal_imagen()
+    payload = {"variables_encontradas": [
+        {"variable": "no_shows", "valor": 16, "confianza": 0.8, "etiqueta_fila": "No-shows", "nota": "..."},
+    ]}
+    cliente = _ClienteFalsoImagen(payload)
+    lecturas = pedir_segunda_lectura_imagen(path, ["no_shows"], cliente)
+    assert lecturas["no_shows"]["valor"] == 16
+    assert lecturas["no_shows"]["confianza"] == 0.8
+    Path(path).unlink()
+
+
+def test_pedir_segunda_lectura_imagen_sin_variables_no_llama_api():
+    path = _archivo_temporal_imagen()
+    cliente = _ClienteFalsoImagen({"variables_encontradas": []})
+    assert pedir_segunda_lectura_imagen(path, [], cliente) == {}
+    assert cliente.ultima_llamada is None, "sin variables no debe invocar a la API"
+    Path(path).unlink()
+
+
+def test_pedir_segunda_lectura_imagen_descarta_variables_no_pedidas():
+    # La relectura de la imagen entera puede volver a encontrar variables
+    # que no eran las dudosas — solo se normalizan las pedidas, el resto se
+    # descarta (mismo criterio que pedir_segunda_lectura con `definiciones`).
+    path = _archivo_temporal_imagen()
+    payload = {"variables_encontradas": [
+        {"variable": "no_shows", "valor": 16, "confianza": 0.8},
+        {"variable": "turnos_agendados", "valor": 40, "confianza": 0.9},
+    ]}
+    cliente = _ClienteFalsoImagen(payload)
+    lecturas = pedir_segunda_lectura_imagen(path, ["no_shows"], cliente)
+    assert list(lecturas.keys()) == ["no_shows"]
+    Path(path).unlink()
 
 
 if __name__ == "__main__":

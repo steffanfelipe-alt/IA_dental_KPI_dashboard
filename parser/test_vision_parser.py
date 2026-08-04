@@ -13,7 +13,8 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
-from extractors.vision_parser import _media_type, parsear_imagen
+from schema import VARIABLE_TYPES
+from extractors.vision_parser import SYSTEM_PROMPT, _VARIABLES_FOTO, _media_type, parsear_imagen
 
 
 class _RespuestaFalsa:
@@ -109,6 +110,35 @@ def test_variable_tipo_ledger_nunca_se_mapea_desde_una_foto():
     variables = parsear_imagen(path, client=cliente)
     assert variables == {}
     Path(path).unlink()
+
+
+def test_system_prompt_ancla_cada_valor_a_la_etiqueta_de_su_propia_fila():
+    # Bug #1a (E2E): una foto con corrimiento vertical uniforme — cada
+    # valor leído un renglón más abajo que su etiqueta real — pasaba con
+    # confianza alta porque el prompt nunca pedía verificar que el valor
+    # perteneciera a LA MISMA fila que su etiqueta. Ahora el modelo debe
+    # devolver, por cada valor, la etiqueta que está en su misma fila
+    # ("etiqueta_fila") y bajar la confianza si hay duda de la alineación.
+    assert "misma fila" in SYSTEM_PROMPT
+    assert "etiqueta_fila" in SYSTEM_PROMPT
+
+
+def test_system_prompt_pide_confianza_baja_ante_duda_de_alineacion_de_fila():
+    # Segunda mitad del requisito #1a: no alcanza con pedir la etiqueta,
+    # también hay que bajar la confianza cuando la pareja valor-etiqueta es
+    # dudosa (mismo criterio que ya existía para dígitos manuscritos
+    # ambiguos, extendido a la alineación de filas).
+    assert "duda" in SYSTEM_PROMPT and "fila" in SYSTEM_PROMPT
+
+
+def test_variables_foto_sigue_derivado_del_schema_sin_hardcodear():
+    # El endurecimiento del prompt (#1a) no debe tocar el vocabulario: sigue
+    # siendo VARIABLE_TYPES menos "list"/"ledger", nunca una lista copiada
+    # a mano en el prompt.
+    assert "ledger_pacientes" not in _VARIABLES_FOTO
+    assert set(_VARIABLES_FOTO) == {
+        v for v in VARIABLE_TYPES if VARIABLE_TYPES[v] not in ("list", "ledger")
+    }
 
 
 def test_media_type_resuelve_extensiones_conocidas():

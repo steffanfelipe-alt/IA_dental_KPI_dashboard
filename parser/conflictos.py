@@ -11,7 +11,6 @@ Separado de pipeline.py para poder testear la lógica de resolución sin
 depender de los extractores ni de Claude.
 """
 
-from dataclasses import replace
 from typing import Any, Optional
 
 from coverage import Conflicto, VariableValue
@@ -109,8 +108,16 @@ def _resolver_por_periodo(candidatos: list[VariableValue], var: str) -> tuple[Op
                 # sistema — un conflicto es por variable, no por período).
                 conflicto = Conflicto(
                     variable=var,
+                    # I8b (bug E2E): antes se mostraba `c.serie[periodo]` — el
+                    # valor del PRIMER período en conflicto (ej. Abril) — pero
+                    # la traza de cada candidato describe su vigente (Mayo),
+                    # así el título y la explicación se contradecían. Se
+                    # muestra `c` tal cual: valor vigente + serie completa,
+                    # consistente con la traza. La serie de abajo desempata
+                    # cuando dos fuentes coinciden en el vigente pero difieren
+                    # en la historia.
                     candidatos=[
-                        _candidato(replace(c, valor=c.serie[periodo]))
+                        _candidato(c)
                         for c in sorted(candidatos_del_periodo, key=lambda c: c.confianza, reverse=True)
                     ],
                 )

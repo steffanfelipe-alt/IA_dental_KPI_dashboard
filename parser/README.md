@@ -8,7 +8,7 @@ una vez por variable, nunca una vez por KPI.
 
 ## Estructura
 
-32 módulos agrupados por dominio (Screaming Architecture) en subcarpetas de
+39 módulos agrupados por dominio (Screaming Architecture) en subcarpetas de
 `parser/`, cada una un paquete Python real (`__init__.py` + imports absolutos
 `parser.<dominio>.<modulo>`). Cada `test_X.py` vive junto a su `X.py`:
 
@@ -21,11 +21,15 @@ parser/
     formato.py                 Formatea un valor según su unidad (ARS, %, horas) para la UI
     periodos.py                Normaliza etiquetas de período a clave canónica ("2026-04")
     claude_utils.py            Helpers compartidos: extraer_texto (saltea bloques de thinking)
+    puerto_llm.py               Puerto PuertoLLM (Protocol) + AdaptadorAnthropic, única clase que llama al SDK
+    puerto_geometria.py         Puerto PuertoGeometria (Protocol) para verificación de geometría de fotos (ver Bug #1a)
 
   extraccion/                  Extractores + segunda opinión
     excel_parser.py            Excel/CSV -> Claude mapea columnas ambiguas al vocabulario
     vision_parser.py           Fotos/PDF -> Claude Vision lee y mapea en un solo paso
     segunda_lectura.py         Segunda opinión de Claude, sin contexto del primer mapeo, para confianza baja
+    estrategias.py              EstrategiaExtraccion (Strategy) + 3 implementaciones, sin isinstance/inspect
+    geometria.py                 contrastar_filas(): audita orden de filas de foto contra layout real (Bug #1a)
 
   pacientes/                   Identidad y ledger de pacientes
     matching.py                Resolución de identidad de pacientes (fuzzy matching + banda gris)
@@ -73,6 +77,7 @@ parser/
   # Composition root / driving adapter — no es lógica de dominio
   pipeline.py                   Orquestador: punto de entrada único (procesar_migracion)
   probar_manual.py              Streamlit: sube archivos, corre pipeline.py, muestra cada sección del payload
+  archivos_temporales.py        escribir_temporales(): temporales con nombre original + limpieza garantizada, sin streamlit
 ```
 
 Convención de tests: cada `test_X.py` corre como módulo del paquete desde la
@@ -551,10 +556,55 @@ hardcodeados que dependían del conteo anterior (`test_catalogo_tecnologico.py`:
 intervenciones 35→45, procesos 3→9; `test_benchmarks.py`: tupla `sin_benchmark` `(7,10,19)` →
 `(1,7,10,19)`). Diff acotado: ~122 líneas.
 
+## Verificación de geometría de filas en fotos — Bug #1a (2026-08-04)
+
+Se encontró: la mitigación original del Bug #1a (`vision_parser.SYSTEM_PROMPT` pidiéndole a
+Claude que se autoreporte en qué fila leyó cada valor, `etiqueta_fila`) es un chequeo
+prompt-only — un corrimiento uniforme de filas preserva el orden monotónico, así que el
+chequeo de orden existente (`validacion.py`) no lo detecta. Quedó diferido en la ronda
+anterior a la charla de arquitectura por implicar vendor, costo por página y privacidad de
+datos de pacientes.
+
+Se corrigió con un "arquero" independiente y determinístico, sin LLM — mismo rol estructural
+que `segunda_lectura.contrastar()` (Bug #2) pero contra layout geométrico real en vez de una
+relectura semántica:
+
+- **`puerto_geometria.py`** (nuevo): puerto `PuertoGeometria` (Protocol, un solo método
+  `ordenar_filas`) + `FilaGeometrica` + `AdaptadorGeometriaVendor`. Deliberadamente separado
+  de `PuertoLLM` — geometría no es una respuesta de chat, es otra tecnología (OCR/layout)
+  mirando el mismo archivo desde otro ángulo.
+- **`geometria.py`** (nuevo): `contrastar_filas()`, mismo contrato de tupla
+  `(confianza_actualizada, discrepancias)` que `segunda_lectura.contrastar()`. A diferencia de
+  segunda lectura (que solo corre sobre variables ya dudosas, por eso puede ignorar
+  discrepancias con seguridad), este chequeo corre sobre TODA variable de foto — así que un
+  desacuerdo baja la confianza explícitamente, sin eso un misread confiado en la fila
+  equivocada (el escenario real del bug) quedaba invisible.
+- **`coverage.py` / `vision_parser.py`**: `VariableValue.etiqueta_fila` nuevo, poblado por
+  `parsear_imagen` (nunca por `parsear_pdf` — geometría es solo para fotos).
+- **`pipeline.py`**: `_verificacion_geometria_fotos()`, nuevo paso en `procesar_migracion`
+  justo después de la segunda lectura, gateado por `fuente == "migracion_foto"`.
+  `puerto_geometria: Optional[PuertoGeometria] = None` — default y único valor pasado hoy en
+  producción, no-op completo y byte-idéntico al comportamiento anterior.
+- **`archivos_temporales.py`** (nuevo, tangencial): el gap de limpieza de temporales que la
+  propuesta original daba por hecho en `probar_manual.py` no existía (ya tenía
+  `finally: shutil.rmtree(...)`) — se extrajo igual a un módulo separado para poder darle
+  cobertura de test real, ya que `probar_manual.py` no se puede importar fuera de Streamlit.
+
+Con qué evidencia: 63 tests nuevos/tocados en 5 archivos, todos verdes
+(`test_geometria`, `test_vision_parser`, `test_estrategias`, `test_coverage`, `test_pipeline`,
+`test_probar_manual`). 4 PRs encadenadas: #8, #9, #10, #11.
+
+**Bloqueado, no técnico**: el adapter real (`AdaptadorGeometriaVendor.ordenar_filas`) es un
+stub que tira `NotImplementedError` — falta elegir vendor (AWS Textract / Google Document AI /
+Azure Document Intelligence), costo por página, y DPA/BAA firmado + consentimiento de paciente
+para un segundo subprocesador. Además, hoy nada en `probar_manual.py` instancia ni pasa
+`puerto_geometria` — la verificación está construida y probada, pero apagada en la app real
+hasta resolver el vendor Y cablearla ahí.
+
 ## Pendiente
 
-**363 tests verdes** al momento de escribir esto (2026-07-31) — el número sigue subiendo
-fase a fase, no tomarlo como techo.
+**424 tests verdes** (32 archivos) al momento de escribir esto (2026-08-04) — el número sigue
+subiendo fase a fase, no tomarlo como techo.
 
 ### Pendientes reales de la Fase I
 

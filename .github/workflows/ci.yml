@@ -49,6 +49,7 @@ jobs:
             parser.diagnostico.test_benchmarks
             parser.diagnostico.test_calidad
             parser.catalogo.test_catalogo_tecnologico
+            parser.vocabulario.test_claude_utils
             parser.cobertura_calidad.test_conflictos
             parser.cobertura_calidad.test_coverage
             parser.catalogo.test_cruces
@@ -56,17 +57,22 @@ jobs:
             parser.cobertura_calidad.test_derivacion
             parser.diagnostico.test_diagnostico
             parser.diagnostico.test_evals_diagnostico
+            parser.extraccion.test_estrategias
             parser.extraccion.test_excel_parser
             parser.interpretacion.test_explicaciones
             parser.vocabulario.test_formato
+            parser.extraccion.test_geometria
             parser.interpretacion.test_interpretacion
             parser.pacientes.test_ledger
             parser.pacientes.test_matching
             parser.pacientes.test_metricas_paciente
             parser.vocabulario.test_periodos
             parser.test_pipeline
+            parser.test_probar_manual
             parser.diagnostico.test_priorizacion_extendida
+            parser.vocabulario.test_puerto_llm
             parser.cobertura_calidad.test_reconciliacion
+            parser.vocabulario.test_schema
             parser.extraccion.test_segunda_lectura
             parser.cobertura_calidad.test_trazabilidad
             parser.cobertura_calidad.test_validacion

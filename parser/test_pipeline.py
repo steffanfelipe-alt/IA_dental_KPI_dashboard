@@ -24,6 +24,7 @@ from parser import pipeline
 from parser.cobertura_calidad.coverage import VariableValue
 from parser.extraccion.estrategias import ResultadoExtraccion
 from parser.pacientes.matching import RegistroClientes
+from parser.vocabulario.puerto_geometria import FilaGeometrica
 
 
 def _restaurar_extractores(original):
@@ -542,6 +543,129 @@ def test_segunda_lectura_de_variable_de_planilla_sigue_usando_el_grid_de_excel()
         pipeline.EXTRACTOR_POR_EXTENSION = original_extractores
         pipeline.excel_parser.leer_hojas_crudas = original_leer_hojas
         pipeline.segunda_lectura.pedir_segunda_lectura_imagen = original_pedir_imagen
+
+
+# ---------------------------------------------------------------------------
+# Fase 3 (Bug #1a, PR 3): _verificacion_geometria_fotos — con
+# puerto_geometria=None (default) el paso es un no-op completo; con un
+# _PuertoGeometriaFalso, un acuerdo sube confianza y un desacuerdo la deja
+# igual y surge por el mismo canal que un mismatch de segunda_lectura
+# (variables_a_confirmar); nunca corre para Excel/PDF.
+# ---------------------------------------------------------------------------
+
+class _PuertoGeometriaFalso:
+    """Fake de PuertoGeometria: mismo espíritu que _PuertoGeometriaFalso en
+    parser/extraccion/test_geometria.py, replicado acá (sin import cruzado
+    entre módulos de test, misma convención que el resto del archivo) —
+    .ordenar_filas(path) devuelve la lista de FilaGeometrica preseteada,
+    sin llamar a ningún vendor real."""
+
+    def __init__(self, filas: list[FilaGeometrica]):
+        self._filas = filas
+        self.ultimo_path = None
+
+    def ordenar_filas(self, path: str) -> list[FilaGeometrica]:
+        self.ultimo_path = path
+        return self._filas
+
+
+def test_geometria_off_deja_variables_byte_identicas_a_antes_del_cambio():
+    # Regresión (Req 3 del spec): puerto_geometria=None es el default y el
+    # único valor que procesar_migracion recibe hoy en producción — el
+    # paso nuevo no debe tocar nada.
+    original_extractores = dict(pipeline.EXTRACTOR_POR_EXTENSION)
+
+    def extractor_foto(path, puerto_llm, registro_clientes=None):
+        vv = VariableValue(16, "migracion_foto", 0.9)
+        vv.etiqueta_fila = "No-shows"
+        return {"no_shows": vv}, {}
+
+    pipeline.EXTRACTOR_POR_EXTENSION = {".png": _estrategia(extractor_foto)}
+    try:
+        resultado = pipeline.procesar_migracion(["foto.png"], puerto_llm=None)
+        assert resultado["variables"]["no_shows"].confianza == 0.9, "sin puerto_geometria, la confianza no cambia"
+        assert resultado["variables"]["no_shows"].valor == 16
+    finally:
+        pipeline.EXTRACTOR_POR_EXTENSION = original_extractores
+
+
+def test_geometria_con_orden_coincidente_sube_confianza():
+    original_extractores = dict(pipeline.EXTRACTOR_POR_EXTENSION)
+
+    def extractor_foto(path, puerto_llm, registro_clientes=None):
+        vv = VariableValue(16, "migracion_foto", 0.5)
+        vv.etiqueta_fila = "No-shows"
+        return {"no_shows": vv}, {}
+
+    pipeline.EXTRACTOR_POR_EXTENSION = {".png": _estrategia(extractor_foto)}
+    puerto_geometria = _PuertoGeometriaFalso([FilaGeometrica(etiqueta="No-shows", y_top=0.1, orden=0)])
+    try:
+        resultado = pipeline.procesar_migracion(["foto.png"], puerto_llm=None, puerto_geometria=puerto_geometria)
+        assert resultado["variables"]["no_shows"].confianza == 0.7  # 0.5 + 0.2 (coincide)
+        assert puerto_geometria.ultimo_path == "foto.png"
+    finally:
+        pipeline.EXTRACTOR_POR_EXTENSION = original_extractores
+
+
+def test_geometria_con_orden_desacoplado_baja_confianza_alta_y_surge_como_discrepancia():
+    original_extractores = dict(pipeline.EXTRACTOR_POR_EXTENSION)
+
+    def extractor_foto(path, puerto_llm, registro_clientes=None):
+        # no_shows arranca con confianza ALTA (0.9) a propósito: es
+        # exactamente el escenario que motivó el Bug #1a — Claude
+        # confiado, pero leyendo el valor de la fila equivocada. Si el
+        # chequeo de geometría no bajara la confianza explícitamente acá
+        # (a diferencia de segunda_lectura, que solo corre sobre
+        # variables YA dudosas), este caso pasaría desapercibido: 0.9
+        # nunca cruza el umbral de variables_baja_confianza por sí solo.
+        # turnos_agendados completa el KPI4 (no_shows/turnos_agendados)
+        # con confianza alta también, para que confianza_min del KPI
+        # quede determinada por no_shows.
+        vv_no_shows = VariableValue(16, "migracion_foto", 0.9)
+        vv_no_shows.etiqueta_fila = "No-shows"
+        return {
+            "no_shows": vv_no_shows,
+            "turnos_agendados": VariableValue(100, "migracion_foto", 0.95),
+        }, {}
+
+    pipeline.EXTRACTOR_POR_EXTENSION = {".png": _estrategia(extractor_foto)}
+    # "no_shows" es la única (y por lo tanto primera, orden original 0)
+    # variable con etiqueta_fila, pero la geometría la ubica en la fila 2
+    # — un corrimiento de 2, mayor que la tolerancia default (1).
+    puerto_geometria = _PuertoGeometriaFalso([
+        FilaGeometrica(etiqueta="Turnos agendados", y_top=0.05, orden=0),
+        FilaGeometrica(etiqueta="Cancelaciones", y_top=0.15, orden=1),
+        FilaGeometrica(etiqueta="No-shows", y_top=0.25, orden=2),
+    ])
+    try:
+        resultado = pipeline.procesar_migracion(["foto.png"], puerto_llm=None, puerto_geometria=puerto_geometria)
+        assert resultado["variables"]["no_shows"].confianza < 0.7, (
+            "un desacuerdo geométrico tiene que bajar la confianza explícitamente, "
+            "aunque haya arrancado alta — si no, un misread confiado en la fila "
+            "equivocada (el escenario real del Bug #1a) queda invisible"
+        )
+        # Mismo canal que un mismatch de segunda_lectura: confianza < 0.7
+        # -> variables_baja_confianza -> variables_a_confirmar del payload.
+        sugerencia = next(v for v in resultado["variables_a_confirmar"] if v["variable"] == "no_shows")
+        assert sugerencia["valor_sugerido"] == 16
+    finally:
+        pipeline.EXTRACTOR_POR_EXTENSION = original_extractores
+
+
+def test_geometria_no_corre_para_variables_de_excel_ni_pdf():
+    original_extractores = dict(pipeline.EXTRACTOR_POR_EXTENSION)
+
+    def extractor_excel(path, puerto_llm, registro_clientes=None):
+        return {"consultas_nuevas_mes": VariableValue(50, "migracion_excel", 0.5)}, {}
+
+    pipeline.EXTRACTOR_POR_EXTENSION = {".xlsx": _estrategia(extractor_excel)}
+    puerto_geometria = _PuertoGeometriaFalso([FilaGeometrica(etiqueta="Consultas nuevas", y_top=0.1, orden=0)])
+    try:
+        resultado = pipeline.procesar_migracion(["clinica.xlsx"], puerto_llm=None, puerto_geometria=puerto_geometria)
+        assert resultado["variables"]["consultas_nuevas_mes"].confianza == 0.5, "Excel no pasa por geometría"
+        assert puerto_geometria.ultimo_path is None, "ordenar_filas nunca debe llamarse para un archivo que no es foto"
+    finally:
+        pipeline.EXTRACTOR_POR_EXTENSION = original_extractores
 
 
 if __name__ == "__main__":

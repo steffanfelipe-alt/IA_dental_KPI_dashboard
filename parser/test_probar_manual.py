@@ -3,28 +3,24 @@ test_probar_manual.py
 
 Sin pytest: corre con `python -m parser.test_probar_manual`.
 
-No importa probar_manual.py directamente: es un script de Streamlit que
+No prueba probar_manual.py directamente: es un script de Streamlit que
 ejecuta `st.*` de nivel superior al importarse (st.set_page_config,
-st.stop() si falta ANTHROPIC_API_KEY, etc.), no un módulo de funciones
-aisladas. Este test reproduce en un helper local, línea por línea, el
-patrón exacto del bloque `st.button("Procesar migración", ...)` de
-probar_manual.py -- `tempfile.mkdtemp()` + escribir cada archivo con su
-nombre original + `try/except/finally: shutil.rmtree(ignore_errors=True)`
--- para probar que la limpieza corre siempre, tanto si `procesar_migracion`
-termina bien como si lanza una excepción. Cubre el Requirement "Temporary
-Upload Cleanup" del spec: no hace falta ningún cambio en probar_manual.py,
-el `finally` ya cubre ambos caminos hoy.
+st.stop() si falta ANTHROPIC_API_KEY), así que no se puede importar en un
+runner standalone. Por eso probar_manual.py delega la escritura/limpieza
+de temporales a `parser.archivos_temporales.escribir_temporales` — un
+módulo separado, sin dependencia de streamlit, que SÍ se puede importar y
+probar directo acá. Este archivo prueba ese módulo real (el mismo que usa
+probar_manual.py en producción), no una copia de su lógica.
 """
 
 import os
-import shutil
-import tempfile
+
+from parser.archivos_temporales import escribir_temporales
 
 
 class _ArchivoFalso:
     """Fake mínimo de UploadedFile de Streamlit: sólo `.name` y
-    `.getvalue()`, que es todo lo que probar_manual.py usa al escribir a
-    disco -- sin depender de streamlit ni de un archivo real."""
+    `.getvalue()`, que es todo lo que escribir_temporales necesita."""
 
     def __init__(self, name: str, contenido: bytes):
         self.name = name
@@ -34,63 +30,34 @@ class _ArchivoFalso:
         return self._contenido
 
 
-def _simular_boton_procesar_migracion(archivos_subidos, procesar_fn):
-    """Reproduce, sin Streamlit, el bloque bajo
-    `st.button("Procesar migración", ...)` de probar_manual.py: escribe
-    cada archivo subido con su nombre original dentro de un directorio
-    temporal, llama a `procesar_fn(paths_temporales)`, y borra el
-    directorio temporal en un `finally` -- corra bien o lance excepción --
-    exactamente el mismo patrón que el original (mkdtemp, nombre original
-    vía os.path.basename, try/except Exception/finally shutil.rmtree)."""
-    dir_temporal = tempfile.mkdtemp()
-    paths_temporales = []
-    for archivo in archivos_subidos or []:
-        destino = os.path.join(dir_temporal, os.path.basename(archivo.name))
-        with open(destino, "wb") as f:
-            f.write(archivo.getvalue())
-        paths_temporales.append(destino)
-
-    excepcion_capturada = None
-    try:
-        procesar_fn(paths_temporales)
-    except Exception as e:
-        excepcion_capturada = e
-    finally:
-        shutil.rmtree(dir_temporal, ignore_errors=True)
-
-    return dir_temporal, excepcion_capturada
-
-
 def test_limpieza_ocurre_tras_procesamiento_exitoso():
     archivos = [_ArchivoFalso("presupuestos_abril.csv", b"col1,col2\n1,2\n")]
-    dir_temporal, excepcion = _simular_boton_procesar_migracion(
-        archivos, procesar_fn=lambda paths: None,
-    )
-    assert excepcion is None
+    with escribir_temporales(archivos) as paths_temporales:
+        dir_temporal = os.path.dirname(paths_temporales[0])
+        assert os.path.exists(dir_temporal)
     assert not os.path.exists(dir_temporal)
 
 
-def test_limpieza_ocurre_cuando_procesar_migracion_lanza_excepcion():
+def test_limpieza_ocurre_cuando_el_procesamiento_lanza_excepcion():
     archivos = [_ArchivoFalso("turnos_mayo.xlsx", b"contenido binario simulado")]
-
-    def _procesar_que_falla(paths):
-        raise ValueError("fallo simulado de procesar_migracion")
-
-    dir_temporal, excepcion = _simular_boton_procesar_migracion(
-        archivos, procesar_fn=_procesar_que_falla,
-    )
-    assert isinstance(excepcion, ValueError)
+    dir_temporal = None
+    excepcion_capturada = None
+    try:
+        with escribir_temporales(archivos) as paths_temporales:
+            dir_temporal = os.path.dirname(paths_temporales[0])
+            raise ValueError("fallo simulado de procesar_migracion")
+    except ValueError as e:
+        excepcion_capturada = e
+    assert isinstance(excepcion_capturada, ValueError)
     assert not os.path.exists(dir_temporal)
 
 
 def test_limpieza_ocurre_incluso_sin_archivos_subidos():
     # Caso "sin archivos" del Paso 3 opcional del onboarding (uploader
-    # vacío, procesar igual): dir_temporal se crea vacío y se borra igual.
-    dir_temporal, excepcion = _simular_boton_procesar_migracion(
-        [], procesar_fn=lambda paths: None,
-    )
-    assert excepcion is None
-    assert not os.path.exists(dir_temporal)
+    # vacío, procesar igual): el directorio se crea vacío y no explota al
+    # salir del `with`, aunque no haya ningún path que devolver.
+    with escribir_temporales([]) as paths_temporales:
+        assert paths_temporales == []
 
 
 def test_archivo_temporal_conserva_nombre_original_antes_de_la_limpieza():
@@ -99,14 +66,10 @@ def test_archivo_temporal_conserva_nombre_original_antes_de_la_limpieza():
     # archivo_origen viaje correcto en trazabilidad/conflictos), no un
     # nombre random tipo NamedTemporaryFile.
     archivos = [_ArchivoFalso("no_shows_marzo.png", b"bytes de imagen simulados")]
-    paths_vistos = []
-
-    def _procesar_que_inspecciona(paths):
-        paths_vistos.extend(paths)
-
-    _simular_boton_procesar_migracion(archivos, procesar_fn=_procesar_que_inspecciona)
-    assert len(paths_vistos) == 1
-    assert os.path.basename(paths_vistos[0]) == "no_shows_marzo.png"
+    with escribir_temporales(archivos) as paths_temporales:
+        assert len(paths_temporales) == 1
+        assert os.path.basename(paths_temporales[0]) == "no_shows_marzo.png"
+        assert os.path.exists(paths_temporales[0])
 
 
 if __name__ == "__main__":

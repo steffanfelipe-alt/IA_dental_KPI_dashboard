@@ -81,6 +81,14 @@ class VariableValue:
     # puede pasar explícito si algún día hace falta un caso que la
     # inferencia automática no cubra bien.
     metodo: Optional[str] = None  # "medido" | "estimado" | "derivado"
+    # Bug #1a / geometry-verification: etiqueta de fila que Claude reportó
+    # como propia del valor (ver vision_parser.SYSTEM_PROMPT, campo
+    # "etiqueta_fila"). Solo lo puebla parsear_imagen — parsear_pdf y el
+    # resto de las fuentes quedan en None a propósito, porque la
+    # verificación de geometría (geometria.contrastar_filas) es exclusiva
+    # de fotos: un PDF nativo no tiene el riesgo de corrimiento de fila
+    # que motivó este campo.
+    etiqueta_fila: Optional[str] = None
 
     def __post_init__(self):
         if self.metodo is None:

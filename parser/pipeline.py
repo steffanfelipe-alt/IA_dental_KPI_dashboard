@@ -35,6 +35,7 @@ from parser.cobertura_calidad.validacion import validar_variable, validar_identi
 from parser.cobertura_calidad.reconciliacion import reconciliar
 from parser.cobertura_calidad.derivacion import derivar_variables_faltantes
 from parser.extraccion import segunda_lectura
+from parser.extraccion import geometria
 from parser.extraccion.estrategias import (
     EstrategiaExtraccion, ExtraccionExcel, ExtraccionVisionImagen, ExtraccionVisionPDF,
 )
@@ -42,6 +43,7 @@ from parser.pacientes import metricas_paciente
 from parser.interpretacion.explicaciones import nombre_humano
 from parser.extraccion import excel_parser, vision_parser
 from parser.vocabulario.puerto_llm import PuertoLLM
+from parser.vocabulario.puerto_geometria import PuertoGeometria
 
 
 # Una sola instancia de cada estrategia alcanza — son sin estado, sólo
@@ -247,11 +249,63 @@ def _segunda_lectura_para_variables_dudosas(
     return variables
 
 
+def _verificacion_geometria_fotos(
+    variables: dict[str, VariableValue],
+    archivos: list[str],
+    puerto_geometria: Optional[PuertoGeometria],
+) -> dict[str, VariableValue]:
+    """
+    Bug #1a: verificación de geometría independiente para fotos — mismo
+    rol estructural que _segunda_lectura_para_variables_dudosas (misma
+    forma try/except alrededor de la llamada externa, mismo patrón de
+    resolución de path vía archivo_por_nombre), pero contra layout real
+    (geometria.contrastar_filas) en vez de una relectura semántica.
+
+    A diferencia de la segunda lectura, corre para TODA variable
+    `migracion_foto` de la foto (no solo las de confianza dudosa): es un
+    chequeo geométrico independiente, no una segunda opinión reservada
+    para lo que ya se ve dudoso (Requirement "Photo triggers geometry
+    pass" del spec).
+
+    Con `puerto_geometria=None` (default de procesar_migracion — el único
+    valor que se pasa hoy en producción, porque el adapter real está
+    bloqueado, ver Fase 5 de tasks.md) esto es un no-op completo: la
+    salida queda byte-idéntica a la de antes de este cambio.
+    """
+    if puerto_geometria is None:
+        return variables
+
+    archivo_por_nombre = {Path(a).name: a for a in archivos}
+    variables = dict(variables)
+
+    por_archivo_foto: dict[str, list[str]] = {}
+    for var, vv in variables.items():
+        if vv.fuente != "migracion_foto":
+            continue
+        if not vv.archivo_origen or vv.archivo_origen not in archivo_por_nombre:
+            continue
+        por_archivo_foto.setdefault(vv.archivo_origen, []).append(var)
+
+    for nombre_archivo, vars_de_foto in por_archivo_foto.items():
+        path = archivo_por_nombre[nombre_archivo]
+        try:
+            filas_geometricas = puerto_geometria.ordenar_filas(path)
+        except Exception:
+            continue
+        variables_de_foto = {var: variables[var] for var in vars_de_foto}
+        confianza_actualizada, _discrepancias = geometria.contrastar_filas(variables_de_foto, filas_geometricas)
+        for var, nueva_confianza in confianza_actualizada.items():
+            variables[var] = replace(variables[var], confianza=nueva_confianza)
+
+    return variables
+
+
 def procesar_migracion(
     archivos: list[str],
     variables_previas: Optional[dict[str, VariableValue]] = None,
     puerto_llm: Optional[PuertoLLM] = None,
     respuestas_diagnostico: Optional[dict[str, str]] = None,
+    puerto_geometria: Optional[PuertoGeometria] = None,
 ) -> dict:
     """
     Devuelve el payload listo para el frontend:
@@ -279,6 +333,14 @@ def procesar_migracion(
     llamaba nadie en producción. Sin este argumento (default None), el
     comportamiento es exactamente el de antes: ambas claves quedan en
     None y no se ejecuta nada nuevo.
+
+    `puerto_geometria` (opcional, Bug #1a): verificación de geometría
+    independiente para variables de foto, ver
+    `_verificacion_geometria_fotos`. Default `None` — el único valor que
+    se pasa hoy en producción, porque el adapter real
+    (`AdaptadorGeometriaVendor`) está bloqueado (Fase 5 de tasks.md) —
+    hace que este paso sea un no-op completo, sin cambiar el
+    comportamiento de antes de este cambio.
     """
     # Un solo RegistroClientes para TODA la migración (Fase 2): así "Juan
     # Pérez" en un archivo y "J. Perez" en otro resuelven al mismo
@@ -389,6 +451,7 @@ def procesar_migracion(
     # despeje), así que una segunda lectura no tendría de dónde sacarlas.
     variables_ya_reconciliadas |= set(nuevas_derivadas)
     variables = _segunda_lectura_para_variables_dudosas(variables, variables_ya_reconciliadas, archivos, puerto_llm)
+    variables = _verificacion_geometria_fotos(variables, archivos, puerto_geometria)
 
     # Fase H4c: si hay ledger_pacientes, ltv_real() es una suma real de
     # eventos "pago" ya extraídos de filas concretas — no un despeje

@@ -89,6 +89,21 @@ def test_extraccion_vision_imagen_devuelve_resultado_extraccion_sin_tasas():
     Path(path).unlink()
 
 
+def test_extraccion_vision_imagen_pasa_etiqueta_fila_sin_tocarla():
+    # geometry-verification PR 2: ExtraccionVisionImagen es un wrapper
+    # delgado sobre vision_parser.parsear_imagen (ver docstring de la
+    # clase) — el passthrough de etiqueta_fila tiene que sobrevivir
+    # intacto a través de la capa de Strategy, sin que este wrapper la
+    # descarte o la reescriba.
+    path = _archivo_temporal(".jpg")
+    payload = {"variables_encontradas": [
+        {"variable": "no_shows", "valor": 16, "confianza": 0.7, "etiqueta_fila": "No-shows"},
+    ]}
+    resultado = ExtraccionVisionImagen().extraer(path, _PuertoLLMFalso(payload))
+    assert resultado.variables["no_shows"].etiqueta_fila == "No-shows"
+    Path(path).unlink()
+
+
 def test_extraccion_vision_imagen_ignora_registro_clientes_sin_romper():
     # El contrato EstrategiaExtraccion exige aceptar el parámetro aunque
     # no lo use — nunca debe tirar TypeError por recibirlo.

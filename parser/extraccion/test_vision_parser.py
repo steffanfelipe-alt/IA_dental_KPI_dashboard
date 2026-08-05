@@ -13,7 +13,9 @@ import tempfile
 from pathlib import Path
 
 from parser.vocabulario.schema import VARIABLE_TYPES
-from parser.extraccion.vision_parser import SYSTEM_PROMPT, _VARIABLES_FOTO, _media_type, parsear_imagen
+from parser.extraccion.vision_parser import (
+    SYSTEM_PROMPT, _VARIABLES_FOTO, _media_type, parsear_imagen, parsear_pdf,
+)
 
 
 class _PuertoLLMFalso:
@@ -142,6 +144,47 @@ def test_media_type_resuelve_extensiones_conocidas():
     assert _media_type("foto.jpg") == "image/jpeg"
     assert _media_type("foto.jpeg") == "image/jpeg"
     assert _media_type("foto.webp") == "image/webp"
+
+
+def test_parsear_imagen_puebla_etiqueta_fila_desde_el_json_del_modelo():
+    # PR 2 de geometry-verification: la etiqueta que el prompt ya le pide a
+    # Claude ("Anclaje de fila") no puede seguir descartándose al construir
+    # VariableValue — geometria.contrastar_filas (Fase 1, ya mergeada)
+    # necesita este dato real para poder cruzarlo contra el orden de la foto.
+    path = _archivo_temporal()
+    payload = {"variables_encontradas": [
+        {"variable": "no_shows", "valor": 16, "confianza": 0.7, "etiqueta_fila": "No-shows"},
+    ]}
+    puerto_llm = _PuertoLLMFalso(payload)
+    variables = parsear_imagen(path, puerto_llm=puerto_llm)
+    assert variables["no_shows"].etiqueta_fila == "No-shows"
+    Path(path).unlink()
+
+
+def test_parsear_imagen_sin_etiqueta_fila_en_el_json_queda_en_none():
+    # El campo es opcional en la respuesta del modelo (mal formado, o
+    # modelo viejo/degradado) — no debe explotar ni inventar un valor.
+    path = _archivo_temporal()
+    payload = {"variables_encontradas": [{"variable": "no_shows", "valor": 16, "confianza": 0.7}]}
+    puerto_llm = _PuertoLLMFalso(payload)
+    variables = parsear_imagen(path, puerto_llm=puerto_llm)
+    assert variables["no_shows"].etiqueta_fila is None
+    Path(path).unlink()
+
+
+def test_parsear_pdf_nunca_puebla_etiqueta_fila():
+    # geometry-verification Requirement "Geometry Verification Scope": la
+    # verificación de geometría es exclusiva de fotos. Aunque el modelo
+    # devuelva "etiqueta_fila" para un PDF (mismo SYSTEM_PROMPT), parsear_pdf
+    # debe ignorarlo — el campo queda en None, el default del dataclass.
+    path = _archivo_temporal(sufijo=".pdf")
+    payload = {"variables_encontradas": [
+        {"variable": "turnos_agendados", "valor": 40, "confianza": 0.6, "etiqueta_fila": "Turnos"},
+    ]}
+    puerto_llm = _PuertoLLMFalso(payload)
+    variables = parsear_pdf(path, puerto_llm=puerto_llm)
+    assert variables["turnos_agendados"].etiqueta_fila is None
+    Path(path).unlink()
 
 
 if __name__ == "__main__":

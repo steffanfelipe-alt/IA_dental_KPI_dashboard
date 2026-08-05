@@ -132,6 +132,12 @@ def parsear_imagen(path: str, puerto_llm: Optional[PuertoLLM] = None) -> dict[st
             valor=valor,
             fuente="migracion_foto",
             confianza=item.get("confianza", 0.6),
+            # Bug #1a / geometry-verification: la etiqueta de fila que
+            # Claude declaró para este valor (ver SYSTEM_PROMPT, "Anclaje
+            # de fila"). Se guarda tal cual la pase el modelo (puede
+            # faltar) para que geometria.contrastar_filas pueda cruzarla
+            # después contra el orden real de la foto.
+            etiqueta_fila=item.get("etiqueta_fila"),
         )
     return variables
 

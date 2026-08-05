@@ -607,18 +607,21 @@ def test_geometria_con_orden_coincidente_sube_confianza():
         pipeline.EXTRACTOR_POR_EXTENSION = original_extractores
 
 
-def test_geometria_con_orden_desacoplado_surge_como_discrepancia_por_el_canal_existente():
+def test_geometria_con_orden_desacoplado_baja_confianza_alta_y_surge_como_discrepancia():
     original_extractores = dict(pipeline.EXTRACTOR_POR_EXTENSION)
 
     def extractor_foto(path, puerto_llm, registro_clientes=None):
-        # turnos_agendados completa el KPI4 (no_shows/turnos_agendados) con
-        # confianza alta a propósito: así confianza_min del KPI queda
-        # determinada por no_shows, que es la que la geometría contradice
-        # — igual que test_segunda_lectura_de_foto_que_no_coincide_no_sube_confianza
-        # pero verificando además que el mismatch llegue a
-        # variables_a_confirmar (variables_baja_confianza), el mismo canal
-        # que ya usa un mismatch de segunda_lectura.
-        vv_no_shows = VariableValue(16, "migracion_foto", 0.5)
+        # no_shows arranca con confianza ALTA (0.9) a propósito: es
+        # exactamente el escenario que motivó el Bug #1a — Claude
+        # confiado, pero leyendo el valor de la fila equivocada. Si el
+        # chequeo de geometría no bajara la confianza explícitamente acá
+        # (a diferencia de segunda_lectura, que solo corre sobre
+        # variables YA dudosas), este caso pasaría desapercibido: 0.9
+        # nunca cruza el umbral de variables_baja_confianza por sí solo.
+        # turnos_agendados completa el KPI4 (no_shows/turnos_agendados)
+        # con confianza alta también, para que confianza_min del KPI
+        # quede determinada por no_shows.
+        vv_no_shows = VariableValue(16, "migracion_foto", 0.9)
         vv_no_shows.etiqueta_fila = "No-shows"
         return {
             "no_shows": vv_no_shows,
@@ -636,7 +639,11 @@ def test_geometria_con_orden_desacoplado_surge_como_discrepancia_por_el_canal_ex
     ])
     try:
         resultado = pipeline.procesar_migracion(["foto.png"], puerto_llm=None, puerto_geometria=puerto_geometria)
-        assert resultado["variables"]["no_shows"].confianza == 0.5, "un desacuerdo no sube la confianza"
+        assert resultado["variables"]["no_shows"].confianza < 0.7, (
+            "un desacuerdo geométrico tiene que bajar la confianza explícitamente, "
+            "aunque haya arrancado alta — si no, un misread confiado en la fila "
+            "equivocada (el escenario real del Bug #1a) queda invisible"
+        )
         # Mismo canal que un mismatch de segunda_lectura: confianza < 0.7
         # -> variables_baja_confianza -> variables_a_confirmar del payload.
         sugerencia = next(v for v in resultado["variables_a_confirmar"] if v["variable"] == "no_shows")

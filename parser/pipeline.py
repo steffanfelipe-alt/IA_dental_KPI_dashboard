@@ -265,7 +265,14 @@ def _verificacion_geometria_fotos(
     `migracion_foto` de la foto (no solo las de confianza dudosa): es un
     chequeo geométrico independiente, no una segunda opinión reservada
     para lo que ya se ve dudoso (Requirement "Photo triggers geometry
-    pass" del spec).
+    pass" del spec). Por eso, a diferencia de
+    _segunda_lectura_para_variables_dudosas (que puede ignorar
+    `discrepancias` porque ahí SIEMPRE entra ya con confianza baja), acá
+    un desacuerdo tiene que bajar la confianza explícitamente: sin este
+    paso, una variable que Claude reportó con confianza ALTA en la fila
+    equivocada (exactamente el escenario que motivó el Bug #1a) quedaría
+    con esa confianza alta intacta y jamás aparecería en
+    variables_a_confirmar.
 
     Con `puerto_geometria=None` (default de procesar_migracion — el único
     valor que se pasa hoy en producción, porque el adapter real está
@@ -293,9 +300,20 @@ def _verificacion_geometria_fotos(
         except Exception:
             continue
         variables_de_foto = {var: variables[var] for var in vars_de_foto}
-        confianza_actualizada, _discrepancias = geometria.contrastar_filas(variables_de_foto, filas_geometricas)
+        confianza_actualizada, discrepancias = geometria.contrastar_filas(variables_de_foto, filas_geometricas)
         for var, nueva_confianza in confianza_actualizada.items():
             variables[var] = replace(variables[var], confianza=nueva_confianza)
+        for var in discrepancias:
+            # A diferencia de confianza_actualizada (que solo puede subir
+            # confianza), acá hay que bajarla explícitamente: es la única
+            # forma de que un desacuerdo geométrico en una variable de
+            # confianza ALTA llegue a variables_a_confirmar (ver docstring
+            # de la función — este paso corre para toda variable de foto,
+            # no solo las ya dudosas).
+            variables[var] = replace(
+                variables[var],
+                confianza=min(variables[var].confianza, segunda_lectura.UMBRAL_CONFIANZA_BAJA - 0.01),
+            )
 
     return variables
 

@@ -24,9 +24,7 @@ proyecto — nunca hardcodeada acá.
 """
 
 import os
-import shutil
 import subprocess
-import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -34,6 +32,7 @@ from typing import Optional
 import streamlit as st
 from dotenv import load_dotenv
 
+from parser.archivos_temporales import escribir_temporales
 from parser.pipeline import EXTRACTOR_POR_EXTENSION, procesar_migracion, resolver_conflicto
 from parser.interpretacion.interpretacion import interpretar_clinica, interpretar_kpi, interpretar_panel
 from parser.catalogo.cruces_propuestos import proponer_cruces
@@ -182,37 +181,30 @@ def _parsear_valor_manual(texto: str):
 
 
 if st.button("Procesar migración", type="primary"):
-    # Se escribe cada archivo con su NOMBRE ORIGINAL dentro de un directorio
-    # temporal, en vez de un NamedTemporaryFile con nombre aleatorio. Así
-    # `archivo_origen` viaja como "presupuestos_abril_mayo2026.csv" y no como
-    # "tmpz9yashn9.csv" — el nombre real aparece en conflictos, trazabilidad,
-    # cuarentena y todo lo demás, que sólo repiten lo que el pipeline guardó.
-    dir_temporal = tempfile.mkdtemp()
-    paths_temporales = []
-    for archivo in archivos_subidos or []:
-        destino = os.path.join(dir_temporal, os.path.basename(archivo.name))
-        with open(destino, "wb") as f:
-            f.write(archivo.getvalue())
-        paths_temporales.append(destino)
-
     respuestas = _parsear_respuestas()
-    with st.spinner("Corriendo procesar_migracion contra la API real..."):
-        try:
-            st.session_state.resultado_migracion = procesar_migracion(
-                paths_temporales,
-                puerto_llm=puerto_llm,
-                # None (no {}) cuando no se cargó ninguna: pipeline distingue
-                # "el dueño no contestó nada" de "contestó y no dijo nada".
-                respuestas_diagnostico=respuestas or None,
-            )
-            # Fase F: una migración nueva invalida cualquier cruce propuesto
-            # sobre el set de variables anterior.
-            st.session_state.cruces_propuestos = []
-            st.session_state.cruces_propuestos_decisiones = {}
-        except Exception as e:
-            st.exception(e)
-        finally:
-            shutil.rmtree(dir_temporal, ignore_errors=True)
+    # escribir_temporales usa el nombre ORIGINAL de cada archivo dentro de
+    # un directorio temporal, en vez de un NamedTemporaryFile con nombre
+    # aleatorio. Así `archivo_origen` viaja como
+    # "presupuestos_abril_mayo2026.csv" y no como "tmpz9yashn9.csv" — el
+    # nombre real aparece en conflictos, trazabilidad, cuarentena y todo lo
+    # demás, que sólo repiten lo que el pipeline guardó. El directorio se
+    # borra siempre al salir del `with`, corra bien o lance excepción.
+    with escribir_temporales(archivos_subidos) as paths_temporales:
+        with st.spinner("Corriendo procesar_migracion contra la API real..."):
+            try:
+                st.session_state.resultado_migracion = procesar_migracion(
+                    paths_temporales,
+                    puerto_llm=puerto_llm,
+                    # None (no {}) cuando no se cargó ninguna: pipeline distingue
+                    # "el dueño no contestó nada" de "contestó y no dijo nada".
+                    respuestas_diagnostico=respuestas or None,
+                )
+                # Fase F: una migración nueva invalida cualquier cruce propuesto
+                # sobre el set de variables anterior.
+                st.session_state.cruces_propuestos = []
+                st.session_state.cruces_propuestos_decisiones = {}
+            except Exception as e:
+                st.exception(e)
 
 resultado = st.session_state.resultado_migracion
 

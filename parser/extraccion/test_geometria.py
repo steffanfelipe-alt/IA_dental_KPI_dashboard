@@ -4,14 +4,17 @@ test_geometria.py
 Sin pytest: corre con `python -m parser.extraccion.test_geometria`.
 
 Cubre `contrastar_filas` (agreement sube confianza, corrimiento de fila
-genera discrepancia) y el fail-closed de `AdaptadorGeometriaVendor` sin
-`GEOMETRIA_API_KEY` — sin llamar a ningún vendor real ni instanciar su SDK.
+genera discrepancia), el fail-closed de `AdaptadorGeometriaVendor` sin
+credenciales de AWS resolubles, el gate de `vendor_produccion_ok`, y la
+traducción de la respuesta real de Textract (`Blocks`/`CELL`) a
+`FilaGeometrica` — todo sin llamar a ningún vendor real ni requerir red.
 """
 
-import os
+import tempfile
 
 from parser.cobertura_calidad.coverage import VariableValue
 from parser.extraccion.geometria import contrastar_filas
+from parser.vocabulario import puerto_geometria
 from parser.vocabulario.puerto_geometria import AdaptadorGeometriaVendor, FilaGeometrica
 
 
@@ -91,19 +94,117 @@ def test_contrastar_filas_variable_sin_etiqueta_fila_se_salta_en_silencio():
     assert discrepancias == {}
 
 
-def test_adaptador_geometria_vendor_sin_api_key_falla_cerrado():
-    valor_previo = os.environ.pop("GEOMETRIA_API_KEY", None)
+class _SesionAwsFalsaSinCredenciales:
+    """Fake de boto3.Session: simula una máquina sin AWS_ACCESS_KEY_ID/
+    AWS_SECRET_ACCESS_KEY ni ~/.aws/credentials, sin tocar el entorno
+    real (que en esta máquina sí tiene credenciales de `aws configure`)."""
+
+    def __init__(self, region_name=None):
+        pass
+
+    def get_credentials(self):
+        return None
+
+
+def test_adaptador_geometria_vendor_sin_credenciales_aws_falla_cerrado():
+    sesion_original = puerto_geometria.boto3.Session
+    puerto_geometria.boto3.Session = _SesionAwsFalsaSinCredenciales
     try:
         fallo = False
         try:
             AdaptadorGeometriaVendor()
         except RuntimeError as error:
             fallo = True
-            assert "GEOMETRIA_API_KEY" in str(error)
-        assert fallo, "sin GEOMETRIA_API_KEY tiene que fallar cerrado, no intentar mandar nada"
+            assert "credenciales" in str(error).lower()
+        assert fallo, "sin credenciales de AWS tiene que fallar cerrado, no intentar mandar nada"
     finally:
-        if valor_previo is not None:
-            os.environ["GEOMETRIA_API_KEY"] = valor_previo
+        puerto_geometria.boto3.Session = sesion_original
+
+
+def test_adaptador_geometria_vendor_produccion_no_ok_no_llama_al_vendor():
+    class _ClienteTextractQueNuncaDeberiaLlamarse:
+        def analyze_document(self, **kwargs):
+            raise AssertionError("no debería llamarse con vendor_produccion_ok=False")
+
+    adaptador = AdaptadorGeometriaVendor(
+        vendor_produccion_ok=False,
+        cliente_textract=_ClienteTextractQueNuncaDeberiaLlamarse(),
+    )
+    fallo = False
+    try:
+        adaptador.ordenar_filas("/tmp/no-importa-no-se-llega-a-abrir.png")
+    except AssertionError as error:
+        fallo = True
+        assert "vendor_produccion_ok" in str(error)
+    assert fallo, "vendor_produccion_ok=False tiene que frenar antes de tocar red o disco"
+
+
+def _bloque_celda(id_bloque, row_index, column_index, ids_hijos):
+    return {
+        "BlockType": "CELL",
+        "Id": id_bloque,
+        "RowIndex": row_index,
+        "ColumnIndex": column_index,
+        "Geometry": {"BoundingBox": {"Top": 0.1 * row_index}},
+        "Relationships": [{"Type": "CHILD", "Ids": ids_hijos}],
+    }
+
+
+def _bloque_word(id_bloque, texto):
+    return {"BlockType": "WORD", "Id": id_bloque, "Text": texto}
+
+
+def test_filas_desde_respuesta_ignora_columna_de_valores_y_pasa_a_0_based():
+    # Mismo shape real que devuelve AnalyzeDocument: RowIndex 1-based,
+    # dos columnas (Concepto/Valor). Solo ColumnIndex==1 (las etiquetas)
+    # tiene que sobrevivir a la traducción.
+    respuesta = {
+        "Blocks": [
+            _bloque_celda("celda-header-concepto", row_index=1, column_index=1, ids_hijos=["w1"]),
+            _bloque_word("w1", "Concepto"),
+            _bloque_celda("celda-header-valor", row_index=1, column_index=2, ids_hijos=["w2"]),
+            _bloque_word("w2", "Valor"),
+            _bloque_celda("celda-etiqueta", row_index=2, column_index=1, ids_hijos=["w3", "w4"]),
+            _bloque_word("w3", "No-shows"),
+            _bloque_word("w4", "hoy"),
+            _bloque_celda("celda-valor", row_index=2, column_index=2, ids_hijos=["w5"]),
+            _bloque_word("w5", "16"),
+        ]
+    }
+
+    filas = AdaptadorGeometriaVendor._filas_desde_respuesta(respuesta)
+
+    assert [(f.etiqueta, f.orden) for f in filas] == [("Concepto", 0), ("No-shows hoy", 1)]
+    assert all(f.etiqueta not in ("Valor", "16") for f in filas)
+
+
+def test_ordenar_filas_llama_al_cliente_inyectado_y_devuelve_filas_traducidas():
+    respuesta_falsa = {
+        "Blocks": [
+            _bloque_celda("celda-1", row_index=1, column_index=1, ids_hijos=["w1"]),
+            _bloque_word("w1", "No-shows"),
+        ]
+    }
+
+    class _ClienteTextractFalso:
+        def __init__(self):
+            self.ultima_llamada = None
+
+        def analyze_document(self, **kwargs):
+            self.ultima_llamada = kwargs
+            return respuesta_falsa
+
+    cliente = _ClienteTextractFalso()
+    adaptador = AdaptadorGeometriaVendor(vendor_produccion_ok=True, cliente_textract=cliente)
+
+    with tempfile.NamedTemporaryFile(suffix=".png") as archivo_temporal:
+        archivo_temporal.write(b"contenido-de-prueba-no-es-una-imagen-real")
+        archivo_temporal.flush()
+        filas = adaptador.ordenar_filas(archivo_temporal.name)
+
+    assert filas == [FilaGeometrica(etiqueta="No-shows", y_top=0.1, orden=0)]
+    assert cliente.ultima_llamada["FeatureTypes"] == ["TABLES"]
+    assert cliente.ultima_llamada["Document"]["Bytes"] == b"contenido-de-prueba-no-es-una-imagen-real"
 
 
 if __name__ == "__main__":

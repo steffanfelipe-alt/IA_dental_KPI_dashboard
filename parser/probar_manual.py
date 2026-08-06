@@ -39,6 +39,7 @@ from parser.catalogo.cruces_propuestos import proponer_cruces
 from parser.vocabulario.formato import fmt_ars, fmt_por_unidad
 from parser.vocabulario.schema import KPI_BY_ID
 from parser.vocabulario.puerto_llm import AdaptadorAnthropic
+from parser.vocabulario.puerto_geometria import AdaptadorGeometriaVendor
 from parser.interpretacion.explicaciones import explicar_cuarentena, explicar_derivada, explicar_discrepancia, nombre_humano
 
 try:
@@ -103,6 +104,20 @@ client = anthropic.Anthropic(api_key=api_key)
 # (interpretacion.py, cruces_propuestos.py) siguen recibiendo el `client`
 # crudo — streaming y fuera de scope de este cambio.
 puerto_llm = AdaptadorAnthropic(client)
+
+# Fase 5 (geometría vía AWS Textract): apagado por default. El gate real
+# no es la credencial de AWS, es el consentimiento del paciente en el UI
+# de onboarding — que todavía no existe (ver puerto_geometria.py) — así
+# que acá se prende sólo con un opt-in explícito y manual, nunca por
+# default, ni siquiera si `aws configure` ya está hecho en esta máquina.
+# Sin el opt-in o sin credenciales resolubles, puerto_geometria queda en
+# None: mismo no-op de siempre (pipeline.py, docstring de procesar_migracion).
+puerto_geometria = None
+if os.environ.get("GEOMETRIA_VENDOR_PRODUCCION_OK") == "true":
+    try:
+        puerto_geometria = AdaptadorGeometriaVendor(vendor_produccion_ok=True)
+    except RuntimeError as error:
+        st.warning(f"Geometría (Textract) no disponible, sigue sin verificación de filas: {error}")
 
 if "resultado_migracion" not in st.session_state:
     st.session_state.resultado_migracion = None
@@ -195,6 +210,7 @@ if st.button("Procesar migración", type="primary"):
                 st.session_state.resultado_migracion = procesar_migracion(
                     paths_temporales,
                     puerto_llm=puerto_llm,
+                    puerto_geometria=puerto_geometria,
                     # None (no {}) cuando no se cargó ninguna: pipeline distingue
                     # "el dueño no contestó nada" de "contestó y no dijo nada".
                     respuestas_diagnostico=respuestas or None,

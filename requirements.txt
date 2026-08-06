@@ -2,6 +2,7 @@
 # These cover both the Streamlit dashboard runtime and the standalone
 # parser/test_*.py suite executed in CI. Third-party deps only.
 anthropic==0.120.0
+boto3==1.43.65
 openpyxl==3.1.5
 pandas==3.0.5
 python-dotenv==1.2.2

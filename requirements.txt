@@ -3,9 +3,13 @@
 # parser/test_*.py suite executed in CI. Third-party deps only.
 anthropic==0.120.0
 boto3==1.43.65
+fastapi==0.141.1
 openpyxl==3.1.5
 pandas==3.0.5
+pydantic==2.13.4
 python-dotenv==1.2.2
+python-multipart==0.0.32
 rapidfuzz==3.14.5
 streamlit==1.60.0
 supabase==2.31.0
+uvicorn==0.52.1

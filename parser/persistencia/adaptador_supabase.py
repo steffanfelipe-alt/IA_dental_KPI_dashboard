@@ -27,6 +27,9 @@ SQL Editor de Supabase — el cliente REST no puede crear tablas):
   informes                 — informe narrativo de Opus, generate-once:
                              `clinica_id` PK, `cargar_informe`/
                              `guardar_informe`.
+  claves_idempotencia      — idempotencia de POST /clinicas: `clave` PK,
+                             `obtener_respuesta_idempotente`/
+                             `guardar_respuesta_idempotente`.
 
 Por qué `detalle` es JSONB y no columnas: `VariableValue`/`Trazabilidad`
 ganaron campos varias veces en la vida de este proyecto (Fase 0, Fase 1,
@@ -198,3 +201,23 @@ class AdaptadorSupabase:
     def guardar_informe(self, clinica_id: str, texto: str) -> None:
         fila = {"clinica_id": clinica_id, "texto": texto}
         self._cliente.table("informes").upsert([fila], on_conflict="clinica_id").execute()
+
+    def obtener_respuesta_idempotente(self, clave: str, owner_id: str) -> Optional[dict[str, Any]]:
+        respuesta = (
+            self._cliente.table("claves_idempotencia")
+            .select("respuesta")
+            .eq("clave", clave)
+            .eq("owner_id", owner_id)
+            .execute()
+        )
+        if not respuesta.data:
+            return None
+        return respuesta.data[0]["respuesta"]
+
+    def guardar_respuesta_idempotente(self, clave: str, owner_id: str, respuesta: dict[str, Any]) -> None:
+        # INSERT liso, no upsert: `clave` es primary key, así que un
+        # segundo intento de guardar la misma clave falla en la base en
+        # vez de pisar la respuesta anterior en silencio (ver schema.sql).
+        self._cliente.table("claves_idempotencia").insert(
+            {"clave": clave, "owner_id": owner_id, "respuesta": respuesta}
+        ).execute()

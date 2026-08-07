@@ -19,10 +19,17 @@ from api.main import app
 class _RepoFalso:
     def __init__(self):
         self.llamadas_crear_clinica: list[tuple[str, str]] = []
+        self._claves_idempotencia: dict[tuple[str, str], dict] = {}
 
     def crear_clinica(self, nombre: str, owner_id: str) -> str:
         self.llamadas_crear_clinica.append((nombre, owner_id))
         return "clinica-generada-1"
+
+    def obtener_respuesta_idempotente(self, clave: str, owner_id: str):
+        return self._claves_idempotencia.get((clave, owner_id))
+
+    def guardar_respuesta_idempotente(self, clave: str, owner_id: str, respuesta: dict) -> None:
+        self._claves_idempotencia[(clave, owner_id)] = respuesta
 
 
 @pytest.fixture()
@@ -76,3 +83,31 @@ def test_crear_clinica_sin_usuario_autenticado_devuelve_401():
         app.dependency_overrides.clear()
 
     assert respuesta.status_code == 401
+
+
+def test_crear_clinica_con_la_misma_idempotency_key_no_crea_dos_veces(cliente, repo_falso):
+    headers = {"Idempotency-Key": "clave-abc"}
+
+    primera = cliente.post("/clinicas", json={"nombre": "Clínica Sonrisas"}, headers=headers)
+    segunda = cliente.post("/clinicas", json={"nombre": "Clínica Sonrisas"}, headers=headers)
+
+    assert primera.status_code == 201
+    assert segunda.status_code == 201
+    assert primera.json() == segunda.json()
+    assert len(repo_falso.llamadas_crear_clinica) == 1, "un reintento con la misma clave no debe insertar de nuevo"
+
+
+def test_crear_clinica_con_idempotency_keys_distintas_crea_dos_clinicas(cliente, repo_falso):
+    cliente.post("/clinicas", json={"nombre": "Clínica A"}, headers={"Idempotency-Key": "clave-1"})
+    cliente.post("/clinicas", json={"nombre": "Clínica B"}, headers={"Idempotency-Key": "clave-2"})
+
+    assert len(repo_falso.llamadas_crear_clinica) == 2
+
+
+def test_crear_clinica_sin_idempotency_key_sigue_funcionando_como_antes(cliente, repo_falso):
+    primera = cliente.post("/clinicas", json={"nombre": "Clínica Sonrisas"})
+    segunda = cliente.post("/clinicas", json={"nombre": "Clínica Sonrisas"})
+
+    assert primera.status_code == 201
+    assert segunda.status_code == 201
+    assert len(repo_falso.llamadas_crear_clinica) == 2, "sin header, cada request crea una clínica nueva"

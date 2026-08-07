@@ -44,15 +44,41 @@ create table if not exists respuestas_diagnostico (
   primary key (clinica_id, pregunta_id)
 );
 
-create index if not exists idx_variables_clinica_id on variables(clinica_id);
-create index if not exists idx_respuestas_diagnostico_clinica_id on respuestas_diagnostico(clinica_id);
+-- Sin índices extra en clinica_id: unique(clinica_id, variable) en
+-- `variables` y el primary key (clinica_id, pregunta_id) en
+-- `respuestas_diagnostico` ya indexan clinica_id como columna líder.
+
+-- Migración aditiva (conversación 2026-08-06, cambio api-auth-onboarding-
+-- diagnostico): `owner_id` habilita el dueño de cada clínica una vez que
+-- existe Auth real; `migracion_completada_en` es la señal explícita de
+-- "el archivo de migración ya se procesó" que consume el endpoint
+-- GET /onboarding/{id}/estado — no se infiere de `variables` no vacío
+-- porque una extracción legítima puede terminar en cero variables (ver
+-- Architecture Decisions del design de este cambio). Todo `add column
+-- if not exists` / `create table if not exists`: seguro de correr de
+-- nuevo, no rompe filas existentes (quedan con owner_id/migracion_
+-- completada_en en null hasta que se completen).
+alter table clinicas add column if not exists owner_id uuid references auth.users(id);
+create index if not exists idx_clinicas_owner_id on clinicas(owner_id);
+alter table clinicas add column if not exists migracion_completada_en timestamptz;
+
+-- Un informe narrativo por clínica (Opus, generate-once): `clinica_id`
+-- como primary key da la idempotencia gratis — POST /informe primero
+-- lee esta tabla, y solo llama al LLM si no hay fila todavía.
+create table if not exists informes (
+  clinica_id   uuid primary key references clinicas(id) on delete cascade,
+  texto        text not null,
+  generado_en  timestamptz not null default now()
+);
 
 -- RLS activado sin políticas: hoy nadie accede salvo el backend con la
 -- service_role key (que bypassea RLS por completo, así que esto no
 -- rompe nada de lo que ya funciona). Deja la base "fallando cerrado"
 -- por default para el día que exista un frontend hablando directo con
 -- Supabase vía la anon key + Auth — recién ahí se agregan políticas
--- reales por clinica_id (ej. auth.uid() = clinicas.owner_id).
+-- reales por clinica_id (ej. auth.uid() = clinicas.owner_id). Sin
+-- políticas `create policy` en este cambio (fuera de alcance, ver spec).
 alter table clinicas enable row level security;
 alter table variables enable row level security;
 alter table respuestas_diagnostico enable row level security;
+alter table informes enable row level security;

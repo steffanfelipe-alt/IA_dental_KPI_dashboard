@@ -21,6 +21,26 @@ parámetros separados — alimentan cosas distintas (las 21 fórmulas de
 `schema.py` vs. el contexto cualitativo de `diagnostico.py`), y mezclarlos
 en un único "guardar clínica" escondería esa distinción que el resto del
 sistema ya respeta.
+
+Los seis métodos agregados en el cambio api-auth-onboarding-diagnostico
+(2026-08-06) cubren lo que el futuro `api/` necesita para el ciclo
+clínica → migración → informe:
+
+  crear_clinica / obtener_owner_id       — alta de clínica y el guard de
+                                            ownership de las rutas HTTP
+                                            (un usuario autenticado solo
+                                            puede leer/escribir su propia
+                                            clínica).
+  marcar_migracion_completada /
+  esta_migracion_completada              — la señal explícita de "el
+                                            archivo ya se procesó" que
+                                            consume GET /estado; no se
+                                            infiere de `variables` no
+                                            vacío (ver design del cambio).
+  cargar_informe / guardar_informe       — el informe narrativo de Opus,
+                                            generate-once: POST /informe
+                                            llama al LLM solo si
+                                            `cargar_informe` devuelve None.
 """
 
 from typing import Protocol
@@ -43,4 +63,22 @@ class PuertoRepositorioClinicas(Protocol):
         ...
 
     def guardar_respuestas_diagnostico(self, clinica_id: str, respuestas: dict[str, str]) -> None:
+        ...
+
+    def crear_clinica(self, nombre: str, owner_id: str) -> str:
+        ...
+
+    def obtener_owner_id(self, clinica_id: str) -> str | None:
+        ...
+
+    def marcar_migracion_completada(self, clinica_id: str) -> None:
+        ...
+
+    def esta_migracion_completada(self, clinica_id: str) -> bool:
+        ...
+
+    def cargar_informe(self, clinica_id: str) -> str | None:
+        ...
+
+    def guardar_informe(self, clinica_id: str, texto: str) -> None:
         ...

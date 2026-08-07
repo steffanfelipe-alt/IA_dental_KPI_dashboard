@@ -5,12 +5,16 @@ Sin pytest: corre con `python -m parser.persistencia.test_adaptador_supabase`.
 
 Cubre el roundtrip de VariableValue (incluyendo serie/trazabilidad/
 etiqueta_fila, todo lo que vive en `detalle` JSONB), el UPSERT pisando
-la fila anterior de la misma variable, respuestas_diagnostico, y el
-fail-closed de AdaptadorSupabase sin credenciales — con un fake del
-cliente de supabase-py, sin red.
+la fila anterior de la misma variable, respuestas_diagnostico, el
+fail-closed de AdaptadorSupabase sin credenciales, y los seis métodos de
+clínica/informe agregados para api-auth-onboarding-diagnostico
+(crear_clinica, obtener_owner_id, marcar_migracion_completada,
+esta_migracion_completada, cargar_informe, guardar_informe) — con un
+fake del cliente de supabase-py, sin red.
 """
 
 import os
+import uuid
 from types import SimpleNamespace
 
 from parser.cobertura_calidad.coverage import VariableValue
@@ -19,16 +23,22 @@ from parser.persistencia.adaptador_supabase import AdaptadorSupabase
 
 
 class _TablaFalsa:
-    """Fake de la tabla de supabase-py: soporta la única cadena que usa
-    AdaptadorSupabase — select().eq().execute() para leer, y
-    upsert(filas, on_conflict=...).execute() para escribir, respetando
-    la unique constraint (clinica_id, <clave>) como lo haría Postgres."""
+    """Fake de la tabla de supabase-py: soporta las cadenas que usa
+    AdaptadorSupabase — select().eq().execute() para leer,
+    upsert(filas, on_conflict=...).execute() para escribir respetando la
+    unique constraint (clinica_id, <clave>) como lo haría Postgres,
+    insert(fila_o_filas).execute() generando `id` si no viene (como el
+    `default gen_random_uuid()` de Postgres), y
+    update(valores).eq(...).execute() aplicando solo a las filas que
+    matchean los filtros acumulados."""
 
     def __init__(self, filas_por_tabla: dict, nombre: str):
         self._filas_por_tabla = filas_por_tabla
         self._nombre = nombre
         self._filtros: list[tuple[str, object]] = []
         self._pendiente_upsert = None
+        self._pendiente_insert = None
+        self._pendiente_update = None
 
     def select(self, *_args, **_kwargs):
         return self
@@ -39,6 +49,14 @@ class _TablaFalsa:
 
     def upsert(self, filas, on_conflict=None):
         self._pendiente_upsert = (filas, on_conflict)
+        return self
+
+    def insert(self, filas):
+        self._pendiente_insert = filas
+        return self
+
+    def update(self, valores):
+        self._pendiente_update = valores
         return self
 
     def execute(self):
@@ -56,6 +74,28 @@ class _TablaFalsa:
                 else:
                     existentes.append(fila_nueva)
             return SimpleNamespace(data=filas_nuevas)
+
+        if self._pendiente_insert is not None:
+            filas_nuevas = self._pendiente_insert
+            if isinstance(filas_nuevas, dict):
+                filas_nuevas = [filas_nuevas]
+            existentes = self._filas_por_tabla.setdefault(self._nombre, [])
+            insertadas = []
+            for fila_nueva in filas_nuevas:
+                fila = dict(fila_nueva)
+                fila.setdefault("id", str(uuid.uuid4()))
+                existentes.append(fila)
+                insertadas.append(fila)
+            return SimpleNamespace(data=insertadas)
+
+        if self._pendiente_update is not None:
+            existentes = self._filas_por_tabla.get(self._nombre, [])
+            actualizadas = []
+            for fila in existentes:
+                if all(fila.get(columna) == valor for columna, valor in self._filtros):
+                    fila.update(self._pendiente_update)
+                    actualizadas.append(fila)
+            return SimpleNamespace(data=actualizadas)
 
         filas = list(self._filas_por_tabla.get(self._nombre, []))
         for columna, valor in self._filtros:
@@ -156,6 +196,69 @@ def test_adaptador_supabase_sin_credenciales_falla_cerrado():
             os.environ["SUPABASE_URL"] = previo_url
         if previo_key is not None:
             os.environ["SUPABASE_SERVICE_ROLE_KEY"] = previo_key
+
+
+def test_crear_clinica_devuelve_el_id_generado():
+    adaptador = AdaptadorSupabase(cliente=_ClienteSupabaseFalso())
+    clinica_id = adaptador.crear_clinica("Clínica Sonrisas", owner_id="owner-1")
+
+    assert isinstance(clinica_id, str) and clinica_id, "crear_clinica debe devolver un id no vacío"
+
+
+def test_obtener_owner_id_devuelve_el_owner_de_la_clinica_creada():
+    adaptador = AdaptadorSupabase(cliente=_ClienteSupabaseFalso())
+    clinica_id = adaptador.crear_clinica("Clínica Sonrisas", owner_id="owner-1")
+
+    assert adaptador.obtener_owner_id(clinica_id) == "owner-1"
+
+
+def test_obtener_owner_id_de_clinica_inexistente_devuelve_none():
+    adaptador = AdaptadorSupabase(cliente=_ClienteSupabaseFalso())
+    assert adaptador.obtener_owner_id(str(uuid.uuid4())) is None
+
+
+def test_esta_migracion_completada_es_false_hasta_marcarla():
+    adaptador = AdaptadorSupabase(cliente=_ClienteSupabaseFalso())
+    clinica_id = adaptador.crear_clinica("Clínica Sonrisas", owner_id="owner-1")
+
+    assert adaptador.esta_migracion_completada(clinica_id) is False
+
+    adaptador.marcar_migracion_completada(clinica_id)
+
+    assert adaptador.esta_migracion_completada(clinica_id) is True
+
+
+def test_esta_migracion_completada_de_clinica_inexistente_devuelve_false():
+    adaptador = AdaptadorSupabase(cliente=_ClienteSupabaseFalso())
+    assert adaptador.esta_migracion_completada(str(uuid.uuid4())) is False
+
+
+def test_cargar_informe_de_clinica_sin_informe_devuelve_none():
+    adaptador = AdaptadorSupabase(cliente=_ClienteSupabaseFalso())
+    clinica_id = adaptador.crear_clinica("Clínica Sonrisas", owner_id="owner-1")
+
+    assert adaptador.cargar_informe(clinica_id) is None
+
+
+def test_guardar_y_cargar_informe_hace_roundtrip():
+    adaptador = AdaptadorSupabase(cliente=_ClienteSupabaseFalso())
+    clinica_id = adaptador.crear_clinica("Clínica Sonrisas", owner_id="owner-1")
+
+    adaptador.guardar_informe(clinica_id, "Informe narrativo generado por Opus.")
+
+    assert adaptador.cargar_informe(clinica_id) == "Informe narrativo generado por Opus."
+
+
+def test_guardar_informe_dos_veces_pisa_el_texto_anterior_sin_duplicar_fila():
+    cliente = _ClienteSupabaseFalso()
+    adaptador = AdaptadorSupabase(cliente=cliente)
+    clinica_id = adaptador.crear_clinica("Clínica Sonrisas", owner_id="owner-1")
+
+    adaptador.guardar_informe(clinica_id, "Primera versión.")
+    adaptador.guardar_informe(clinica_id, "Segunda versión, regenerada.")
+
+    assert len(cliente.filas_por_tabla["informes"]) == 1, "guardar_informe no debe duplicar filas por clínica"
+    assert adaptador.cargar_informe(clinica_id) == "Segunda versión, regenerada."
 
 
 if __name__ == "__main__":

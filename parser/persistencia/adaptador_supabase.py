@@ -2,10 +2,19 @@
 adaptador_supabase.py
 
 Único lugar del código que conoce Supabase. Implementa
-`PuertoRepositorioClinicas` (ver puerto_repositorio.py) contra dos tablas
-(`schema.sql` tiene el DDL completo, se corre a mano una vez en el SQL
-Editor de Supabase — el cliente REST no puede crear tablas):
+`PuertoRepositorioClinicas` (ver puerto_repositorio.py) contra cuatro
+tablas (`schema.sql` tiene el DDL completo, se corre a mano una vez en el
+SQL Editor de Supabase — el cliente REST no puede crear tablas):
 
+  clinicas                — alta de clínica (`crear_clinica`), el
+                             `owner_id` que usa el guard de ownership de
+                             las rutas HTTP (`obtener_owner_id`), y la
+                             señal explícita `migracion_completada_en` de
+                             "el archivo ya se procesó" que consume
+                             GET /estado (`marcar_migracion_completada`/
+                             `esta_migracion_completada`) — no se infiere
+                             de `variables` no vacío, ver design del
+                             cambio api-auth-onboarding-diagnostico.
   variables               — columnas simples de VariableValue (valor,
                              periodo, fuente, confianza, archivo_origen,
                              metodo) + `detalle` JSONB con todo lo
@@ -15,6 +24,9 @@ Editor de Supabase — el cliente REST no puede crear tablas):
                              — una fila vigente por variable por clínica,
                              UPSERT la pisa.
   respuestas_diagnostico   — dict simple {pregunta_id: respuesta}.
+  informes                 — informe narrativo de Opus, generate-once:
+                             `clinica_id` PK, `cargar_informe`/
+                             `guardar_informe`.
 
 Por qué `detalle` es JSONB y no columnas: `VariableValue`/`Trazabilidad`
 ganaron campos varias veces en la vida de este proyecto (Fase 0, Fase 1,
@@ -24,14 +36,18 @@ cada vez. Ver la comparación completa en la conversación de diseño
 
 Autenticación: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY por variables de
 entorno (falla cerrado si faltan, mismo criterio que puerto_geometria.py).
-Se usa la service_role key — bypassea RLS por completo — porque hoy no
-hay ningún login real: el backend decide a qué `clinica_id` accede, no un
-usuario logueado. Migrar a la `anon` key + políticas de RLS por clínica
-el día que exista Auth de verdad (anotado, no se resuelve acá).
+Se usa la service_role key — bypassea RLS por completo — porque hoy
+tampoco hay políticas de RLS (`schema.sql` las activa sin políticas, ver
+comentario ahí). El ownership de `owner_id` que agrega `crear_clinica`/
+`obtener_owner_id` para el cambio api-auth-onboarding-diagnostico se
+verifica a nivel aplicación (`owner_de_clinica` en `api/deps.py`, capa
+que llega en un PR posterior) — no a nivel base todavía; es un trust
+boundary temporal hasta que existan políticas de RLS reales.
 """
 
 import os
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from parser.cobertura_calidad.coverage import VariableValue
@@ -41,6 +57,15 @@ try:
     from supabase import create_client
 except ImportError:  # pragma: no cover
     create_client = None
+
+
+def _ahora_iso() -> str:
+    """Timestamp UTC en formato ISO 8601, lo que Postgres/PostgREST espera
+    para una columna `timestamptz`. Función propia (en vez de `now()` en
+    el payload) porque el cliente REST de Supabase no evalúa SQL del lado
+    del servidor sobre valores que le mandamos nosotros — el momento hay
+    que fijarlo acá, en el adapter."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _fila_desde_variable(clinica_id: str, variable: str, vv: VariableValue) -> dict[str, Any]:
@@ -95,8 +120,8 @@ def _variable_desde_fila(fila: dict[str, Any]) -> VariableValue:
 class AdaptadorSupabase:
     """Adapter real (driven) de `PuertoRepositorioClinicas` contra
     Supabase. `cliente` es inyectable para tests (cualquier objeto con
-    `.table(nombre).select/eq/upsert/execute` alcanza, no hace falta el
-    SDK real — ver test_adaptador_supabase.py)."""
+    `.table(nombre).select/eq/insert/update/upsert/execute` alcanza, no
+    hace falta el SDK real — ver test_adaptador_supabase.py)."""
 
     def __init__(
         self,
@@ -142,3 +167,34 @@ class AdaptadorSupabase:
             for pregunta_id, respuesta in respuestas.items()
         ]
         self._cliente.table("respuestas_diagnostico").upsert(filas, on_conflict="clinica_id,pregunta_id").execute()
+
+    def crear_clinica(self, nombre: str, owner_id: str) -> str:
+        respuesta = self._cliente.table("clinicas").insert({"nombre": nombre, "owner_id": owner_id}).execute()
+        return respuesta.data[0]["id"]
+
+    def obtener_owner_id(self, clinica_id: str) -> Optional[str]:
+        respuesta = self._cliente.table("clinicas").select("owner_id").eq("id", clinica_id).execute()
+        if not respuesta.data:
+            return None
+        return respuesta.data[0].get("owner_id")
+
+    def marcar_migracion_completada(self, clinica_id: str) -> None:
+        self._cliente.table("clinicas").update({"migracion_completada_en": _ahora_iso()}).eq(
+            "id", clinica_id
+        ).execute()
+
+    def esta_migracion_completada(self, clinica_id: str) -> bool:
+        respuesta = self._cliente.table("clinicas").select("migracion_completada_en").eq("id", clinica_id).execute()
+        if not respuesta.data:
+            return False
+        return respuesta.data[0].get("migracion_completada_en") is not None
+
+    def cargar_informe(self, clinica_id: str) -> Optional[str]:
+        respuesta = self._cliente.table("informes").select("texto").eq("clinica_id", clinica_id).execute()
+        if not respuesta.data:
+            return None
+        return respuesta.data[0]["texto"]
+
+    def guardar_informe(self, clinica_id: str, texto: str) -> None:
+        fila = {"clinica_id": clinica_id, "texto": texto}
+        self._cliente.table("informes").upsert([fila], on_conflict="clinica_id").execute()

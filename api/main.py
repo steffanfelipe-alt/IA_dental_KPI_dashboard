@@ -6,9 +6,9 @@ Architecture): no tiene lógica de negocio propia, sólo traduce
 HTTP↔dominio y delega todo a `parser/`. Ver design del cambio
 api-auth-onboarding-diagnostico para el detalle completo.
 
-`include_router` de `diagnostico`/`informe` (rutas de
-`api/routers/clinicas.py` tasks 4.5/4.6) NO está acá todavía — llega en
-el PR de diagnóstico/informe.
+Las rutas de diagnóstico/informe (tasks 4.5/4.6) viven dentro de
+`clinicas.router` (prefix `/clinicas`), no en un router aparte — no
+hace falta un `include_router` nuevo para ellas.
 """
 
 from fastapi import FastAPI

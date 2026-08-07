@@ -17,11 +17,12 @@ los providers de infraestructura (repositorio, cliente Supabase anon):
                        clínica). 404 si la clínica no existe, 403 si el
                        owner no matchea.
 
-`RepositorioDep`/`ClienteAnonDep` son providers, no guards: quedan acá
-para que los routers los puedan pedir vía `Depends` sin conocer
-`AdaptadorSupabase` ni `create_client` directamente, y para que los tests
-los puedan overridear con `app.dependency_overrides` sin tocar Supabase
-real.
+`RepositorioDep`/`ClienteAnonDep`/`ClienteAnthropicDep` son providers, no
+guards: quedan acá para que los routers los puedan pedir vía `Depends`
+sin conocer `AdaptadorSupabase`, `create_client` ni
+`anthropic.Anthropic` directamente, y para que los tests los puedan
+overridear con `app.dependency_overrides` sin tocar Supabase/Anthropic
+reales.
 """
 
 from dataclasses import dataclass
@@ -30,7 +31,7 @@ from typing import Annotated, Any, Optional
 from fastapi import Depends, HTTPException, Path, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from api.config import obtener_cliente_supabase_anon
+from api.config import obtener_cliente_anthropic, obtener_cliente_supabase_anon
 from parser.persistencia.adaptador_supabase import AdaptadorSupabase
 from parser.persistencia.puerto_repositorio import PuertoRepositorioClinicas
 
@@ -50,6 +51,8 @@ def obtener_repositorio() -> PuertoRepositorioClinicas:
 RepositorioDep = Annotated[PuertoRepositorioClinicas, Depends(obtener_repositorio)]
 
 ClienteAnonDep = Annotated[Any, Depends(obtener_cliente_supabase_anon)]
+
+ClienteAnthropicDep = Annotated[Any, Depends(obtener_cliente_anthropic)]
 
 
 def obtener_usuario_actual(

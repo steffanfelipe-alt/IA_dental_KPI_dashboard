@@ -43,6 +43,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from api.config import EXTENSIONES_PERMITIDAS, TAMANO_MAXIMO_ARCHIVO_BYTES
 from api.deps import OwnerDeClinicaDep, RepositorioDep
+from api.onboarding_estado import calcular_estado_onboarding
 from api.schemas.onboarding import (
     EstadoResponse,
     GuiaResponse,
@@ -151,13 +152,20 @@ def guardar_respuestas(clinica_id: OwnerDeClinicaDep, datos: RespuestasRequest, 
 
 @router.get("/{clinica_id}/estado")
 def obtener_estado(clinica_id: OwnerDeClinicaDep, repo: RepositorioDep) -> EstadoResponse:
+    # Fase PR4: la cuenta de "qué falta" se factoreó a
+    # api.onboarding_estado.calcular_estado_onboarding, que también usan
+    # GET /clinicas/{id}/diagnostico y POST|GET /clinicas/{id}/informe
+    # como gate de 409 — misma condición de completitud, un solo lugar
+    # que la calcula. PREGUNTAS_REQUERIDAS_ONBOARDING se sigue leyendo
+    # del nombre a nivel módulo de ESTE router (no importado dentro de
+    # la función compartida) para que los tests existentes que
+    # monkeypatchean `onboarding.PREGUNTAS_REQUERIDAS_ONBOARDING` sigan
+    # funcionando sin cambios.
     migracion_completada = repo.esta_migracion_completada(clinica_id)
     respuestas = repo.cargar_respuestas_diagnostico(clinica_id)
-    preguntas_faltantes = [
-        id_pregunta for id_pregunta in PREGUNTAS_REQUERIDAS_ONBOARDING if id_pregunta not in respuestas
-    ]
+    estado = calcular_estado_onboarding(migracion_completada, respuestas, PREGUNTAS_REQUERIDAS_ONBOARDING)
     return EstadoResponse(
-        completo=migracion_completada and not preguntas_faltantes,
-        migracion_completada=migracion_completada,
-        preguntas_faltantes=preguntas_faltantes,
+        completo=estado.completo,
+        migracion_completada=estado.migracion_completada,
+        preguntas_faltantes=estado.preguntas_faltantes,
     )

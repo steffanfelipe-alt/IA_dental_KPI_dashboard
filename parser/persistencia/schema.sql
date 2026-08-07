@@ -71,6 +71,25 @@ create table if not exists informes (
   generado_en  timestamptz not null default now()
 );
 
+-- Idempotencia de POST /clinicas (2026-08-07): si el cliente manda un
+-- header Idempotency-Key, la primera respuesta exitosa se guarda acá;
+-- un reintento con la misma clave devuelve esa respuesta guardada en
+-- vez de crear una segunda clínica. `clave` como primary key hace que
+-- un segundo INSERT con la misma clave falle en la base (Postgres
+-- rechaza el duplicado) en vez de pisarlo en silencio — un caller que
+-- reintenta escribir la misma clave con una respuesta distinta es un
+-- bug del caller, no algo que este esquema deba tolerar. `owner_id`
+-- scopea la clave por usuario (defensivo: hoy las claves son strings
+-- opacas elegidas por el cliente, así que dos usuarios podrían elegir
+-- el mismo valor por casualidad). Sin TTL/limpieza acá — simplificación
+-- conocida, no hace falta todavía con el volumen actual.
+create table if not exists claves_idempotencia (
+  clave       text primary key,
+  owner_id    uuid not null references auth.users(id),
+  respuesta   jsonb not null,
+  creado_en   timestamptz not null default now()
+);
+
 -- RLS activado sin políticas: hoy nadie accede salvo el backend con la
 -- service_role key (que bypassea RLS por completo, así que esto no
 -- rompe nada de lo que ya funciona). Deja la base "fallando cerrado"
@@ -82,3 +101,4 @@ alter table clinicas enable row level security;
 alter table variables enable row level security;
 alter table respuestas_diagnostico enable row level security;
 alter table informes enable row level security;
+alter table claves_idempotencia enable row level security;

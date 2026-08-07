@@ -41,9 +41,20 @@ clínica → migración → informe:
                                             generate-once: POST /informe
                                             llama al LLM solo si
                                             `cargar_informe` devuelve None.
+
+Los dos métodos agregados 2026-08-07 (idempotencia de POST /clinicas):
+
+  obtener_respuesta_idempotente /
+  guardar_respuesta_idempotente          — si el cliente manda un header
+                                            Idempotency-Key, el router
+                                            chequea si esa clave ya tiene
+                                            una respuesta guardada antes
+                                            de crear la clínica; si la
+                                            tiene, la devuelve tal cual
+                                            en vez de insertar de nuevo.
 """
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from parser.cobertura_calidad.coverage import VariableValue
 
@@ -81,4 +92,10 @@ class PuertoRepositorioClinicas(Protocol):
         ...
 
     def guardar_informe(self, clinica_id: str, texto: str) -> None:
+        ...
+
+    def obtener_respuesta_idempotente(self, clave: str, owner_id: str) -> dict[str, Any] | None:
+        ...
+
+    def guardar_respuesta_idempotente(self, clave: str, owner_id: str, respuesta: dict[str, Any]) -> None:
         ...

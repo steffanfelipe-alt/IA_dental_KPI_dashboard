@@ -261,6 +261,28 @@ def test_guardar_informe_dos_veces_pisa_el_texto_anterior_sin_duplicar_fila():
     assert adaptador.cargar_informe(clinica_id) == "Segunda versión, regenerada."
 
 
+def test_obtener_respuesta_idempotente_sin_clave_guardada_devuelve_none():
+    adaptador = AdaptadorSupabase(cliente=_ClienteSupabaseFalso())
+    assert adaptador.obtener_respuesta_idempotente("clave-1", owner_id="owner-1") is None
+
+
+def test_guardar_y_obtener_respuesta_idempotente_hace_roundtrip():
+    adaptador = AdaptadorSupabase(cliente=_ClienteSupabaseFalso())
+    respuesta = {"id": "clinica-1", "nombre": "Clínica Sonrisas", "owner_id": "owner-1"}
+
+    adaptador.guardar_respuesta_idempotente("clave-1", owner_id="owner-1", respuesta=respuesta)
+
+    assert adaptador.obtener_respuesta_idempotente("clave-1", owner_id="owner-1") == respuesta
+
+
+def test_obtener_respuesta_idempotente_no_mezcla_owners_con_la_misma_clave():
+    cliente = _ClienteSupabaseFalso()
+    adaptador = AdaptadorSupabase(cliente=cliente)
+    adaptador.guardar_respuesta_idempotente("clave-1", owner_id="owner-1", respuesta={"nombre": "De owner-1"})
+
+    assert adaptador.obtener_respuesta_idempotente("clave-1", owner_id="owner-2") is None
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

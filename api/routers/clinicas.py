@@ -4,7 +4,13 @@ routers/clinicas.py
 `POST /clinicas`: alta de clínica con `owner_id` fijado al usuario
 autenticado (`CurrentUserDep.id`), nunca al valor del body — un usuario
 autenticado sólo puede crear una clínica de la que él es owner (spec:
-"owner_id = auth.uid()").
+"owner_id = auth.uid()"). Acepta un header opcional `Idempotency-Key`:
+si viene, un reintento con la misma clave devuelve la respuesta ya
+guardada en vez de crear una segunda clínica (ver
+`api/onboarding_estado.py` para el otro ejemplo de "lógica compartida
+en su propio módulo" — acá no hizo falta, el chequeo es chico y vive
+directo en el handler). Sin el header, el comportamiento es idéntico al
+de antes: no es obligatorio, es una mejora opt-in.
 
 `GET /clinicas/{id}/diagnostico`: recompute determinista (sin LLM) del
 diagnóstico estructurado — `procesar_migracion(archivos=[], ...)` con
@@ -31,7 +37,9 @@ en el boundary de import de este router
 inyectable.
 """
 
-from fastapi import APIRouter, HTTPException, status
+from typing import Annotated, Optional
+
+from fastapi import APIRouter, Header, HTTPException, status
 
 from api.deps import ClienteAnthropicDep, CurrentUserDep, OwnerDeClinicaDep, RepositorioDep
 from api.onboarding_estado import exigir_onboarding_completo
@@ -49,9 +57,20 @@ def crear_clinica(
     datos: CrearClinicaRequest,
     usuario_actual: CurrentUserDep,
     repo: RepositorioDep,
+    idempotency_key: Annotated[Optional[str], Header(alias="Idempotency-Key")] = None,
 ) -> ClinicaResponse:
+    if idempotency_key is not None:
+        existente = repo.obtener_respuesta_idempotente(idempotency_key, owner_id=usuario_actual.id)
+        if existente is not None:
+            return ClinicaResponse(**existente)
+
     clinica_id = repo.crear_clinica(datos.nombre, owner_id=usuario_actual.id)
-    return ClinicaResponse(id=clinica_id, nombre=datos.nombre, owner_id=usuario_actual.id)
+    respuesta = ClinicaResponse(id=clinica_id, nombre=datos.nombre, owner_id=usuario_actual.id)
+
+    if idempotency_key is not None:
+        repo.guardar_respuesta_idempotente(idempotency_key, owner_id=usuario_actual.id, respuesta=respuesta.model_dump())
+
+    return respuesta
 
 
 @router.get("/{clinica_id}/diagnostico")

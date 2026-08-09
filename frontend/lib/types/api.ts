@@ -90,8 +90,34 @@ export interface ResolverConflictoRequest {
  * real validation). These shapes cover the keys the wizard actually
  * reads; every other key still round-trips via the index signature.
  */
+// `parser/cobertura_calidad/conflictos.py`'s `_candidato()`: always has
+// `valor`/`archivo`/`fuente`/`confianza`/`explicacion`; `serie`/
+// `periodo_vigente`/`etiquetas_originales` only when the winning
+// `VariableValue` carried a series. Optional, hand-verified against that
+// function rather than guessed — the index signature still covers
+// anything else that round-trips.
+export interface CandidatoConflicto {
+  valor: unknown;
+  archivo?: string | null;
+  fuente?: string | null;
+  confianza?: number;
+  explicacion?: string;
+  serie?: Record<string, unknown>;
+  periodo_vigente?: string | null;
+  etiquetas_originales?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+// `parser/pipeline.py`'s `procesar_migracion` builds `conflictos_pendientes`
+// as `{variable, tipo, pregunta, opciones, permite_valor_manual}` (see the
+// `resultado` dict literal there) — `opciones` is the candidate list built
+// by `CandidatoConflicto` above.
 export interface Conflicto {
   variable: string;
+  tipo?: string;
+  pregunta?: string;
+  opciones?: CandidatoConflicto[];
+  permite_valor_manual?: boolean;
   [key: string]: unknown;
 }
 

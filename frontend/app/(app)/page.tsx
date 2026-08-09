@@ -41,13 +41,16 @@ function SparkleIcon() {
 }
 
 /**
- * Welcome landing for the authenticated area (design D4). The onboarding
- * wizard itself (`app/(app)/onboarding/**`) lands in a later PR —
- * "Continuar" has no destination yet.
+ * Welcome landing for the authenticated area (design D4). "Continuar"
+ * starts the onboarding wizard at its first step, the consent gate.
  */
 export default function AppHome() {
   const router = useRouter();
   const [loggingOut, setLoggingOut] = useState(false);
+
+  function handleContinue() {
+    router.push("/onboarding/consent");
+  }
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -88,7 +91,7 @@ export default function AppHome() {
             </li>
           </ul>
 
-          <Button type="button">
+          <Button type="button" onClick={handleContinue}>
             Continuar <span aria-hidden="true">→</span>
           </Button>
         </div>

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/Button";
 
 /**
  * Placeholder landing for the authenticated area. The onboarding wizard
@@ -23,19 +24,14 @@ export default function AppHome() {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-8 text-center">
-      <h1 className="text-2xl font-semibold text-zinc-900">Sesión iniciada</h1>
-      <p className="max-w-md text-zinc-600">
+      <h1 className="text-2xl font-semibold text-ink-900">Sesión iniciada</h1>
+      <p className="max-w-md text-ink-600">
         El asistente de onboarding todavía no está disponible en esta versión — vas a poder crear tu
         clínica y cargar tus datos acá en un próximo paso.
       </p>
-      <button
-        type="button"
-        onClick={handleLogout}
-        disabled={loggingOut}
-        className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
-      >
+      <Button type="button" onClick={handleLogout} disabled={loggingOut} className="w-auto">
         {loggingOut ? "Cerrando sesión…" : "Cerrar sesión"}
-      </button>
+      </Button>
     </main>
   );
 }

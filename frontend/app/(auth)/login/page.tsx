@@ -7,6 +7,9 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { isApiErrorEnvelope } from "@/lib/types/errors";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { TextField } from "@/components/ui/TextField";
 
 const loginSchema = z.object({
   email: z.string().min(1, "El email es obligatorio.").email("Ingresá un email válido."),
@@ -45,60 +48,52 @@ export default function LoginPage() {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 p-8">
-      <div className="w-full max-w-sm space-y-6">
-        <h1 className="text-2xl font-semibold text-zinc-900">Iniciar sesión</h1>
+      <p className="text-lg font-semibold text-ink-900">
+        <span className="text-primary-600">AI</span> dental dashboard
+      </p>
 
-        <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
-          {serverError ? (
-            <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-              {serverError}
-            </p>
-          ) : null}
+      <Card>
+        <div className="space-y-6">
+          <h1 className="text-2xl font-semibold text-ink-900">Iniciar sesión</h1>
 
-          <div className="space-y-1">
-            <label htmlFor="email" className="block text-sm font-medium text-zinc-700">
-              Email
-            </label>
-            <input
+          <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
+            {serverError ? (
+              <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">
+                {serverError}
+              </p>
+            ) : null}
+
+            <TextField
               id="email"
+              label="Email"
               type="email"
               autoComplete="email"
-              className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+              error={errors.email?.message}
               {...register("email")}
             />
-            {errors.email ? <p className="text-sm text-red-600">{errors.email.message}</p> : null}
-          </div>
 
-          <div className="space-y-1">
-            <label htmlFor="password" className="block text-sm font-medium text-zinc-700">
-              Contraseña
-            </label>
-            <input
+            <TextField
               id="password"
+              label="Contraseña"
               type="password"
               autoComplete="current-password"
-              className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+              error={errors.password?.message}
               {...register("password")}
             />
-            {errors.password ? <p className="text-sm text-red-600">{errors.password.message}</p> : null}
-          </div>
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
-          >
-            {isSubmitting ? "Ingresando…" : "Ingresar"}
-          </button>
-        </form>
+            <Button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? "Ingresando…" : "Ingresar"}
+            </Button>
+          </form>
 
-        <p className="text-center text-sm text-zinc-600">
-          ¿No tenés cuenta?{" "}
-          <Link href="/signup" className="font-medium text-zinc-900 underline">
-            Creá una
-          </Link>
-        </p>
-      </div>
+          <p className="text-center text-sm text-ink-600">
+            ¿No tenés cuenta?{" "}
+            <Link href="/signup" className="font-medium text-primary-600 hover:text-primary-700">
+              Creá una
+            </Link>
+          </p>
+        </div>
+      </Card>
     </main>
   );
 }

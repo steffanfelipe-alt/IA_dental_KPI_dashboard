@@ -132,3 +132,71 @@ export interface ResolverConflictoResponse {
   variables: Record<string, unknown>;
   [key: string]: unknown;
 }
+
+// api/schemas/diagnostico_informe.py + parser/diagnostico/diagnostico.py::EstadoEvidencia.
+export type EstadoEvidencia =
+  | "HEALTHY"
+  | "NORMAL"
+  | "WATCH"
+  | "PROBLEM"
+  | "CRITICAL"
+  | "INSUFFICIENT_EVIDENCE";
+
+// parser/diagnostico/diagnostico.py::Anomalia.
+export interface Anomalia {
+  kpi_id: number;
+  estado: EstadoEvidencia;
+  magnitud_pct: number | null;
+  confiabilidad_benchmark: string;
+}
+
+// parser/diagnostico/diagnostico.py::Hipotesis.
+export interface Hipotesis {
+  kpi_id: number;
+  causa_probable: string;
+  confianza: "alta" | "media" | "baja";
+  preguntas_que_la_sustentan: string[];
+}
+
+// parser/diagnostico/diagnostico.py::Contradiccion.
+export interface Contradiccion {
+  kpi_id: number;
+  descripcion: string;
+  preguntas_involucradas: string[];
+}
+
+/**
+ * parser/diagnostico/diagnostico.py::Diagnostico, serialized by
+ * `model_dump(mode="json")` — `GET /clinicas/{id}/diagnostico`
+ * (`api/routers/clinicas.py`) returns a `list[Any]` of these on the
+ * backend (deliberately untyped there), but the shape is stable and
+ * documented, so the frontend types it precisely instead of mirroring
+ * the `Any`. `hechos` is a list of pre-formatted strings (e.g.
+ * `"valor_actual=27.4"`), not raw numbers.
+ */
+export interface Diagnostico {
+  kpi_id: number;
+  problema: string;
+  estado: EstadoEvidencia;
+  hechos: string[];
+  anomalias: Anomalia[];
+  hipotesis: Hipotesis[];
+  contradicciones: Contradiccion[];
+  patrones_cruzados: string[];
+  informacion_faltante: string[];
+  confianza: number;
+  prioridad: number | null;
+}
+
+// api/schemas/diagnostico_informe.py: DiagnosticoResponse.
+export interface DiagnosticoResponse {
+  diagnostico: Diagnostico[];
+}
+
+// api/schemas/diagnostico_informe.py: InformeResponse. `texto` is one
+// long markdown-ish prose block (the "informe jerárquico de 10
+// secciones" per `interpretar_clinica`'s docstring) — not structured
+// JSON, not meant to be parsed for individual metric cards.
+export interface InformeResponse {
+  texto: string;
+}

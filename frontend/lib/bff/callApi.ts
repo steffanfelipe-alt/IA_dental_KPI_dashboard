@@ -141,6 +141,11 @@ export async function callApi<T>(path: string, options: CallApiOptions = {}): Pr
   const response = await doFetch(path, buildRequestInit(options, bearerToken), options.cache);
 
   if (response.ok) {
+    // 204 No Content (e.g. `PUT /onboarding/{id}/respuestas`) has no body
+    // to parse — calling response.json() on it throws a SyntaxError.
+    if (response.status === 204) {
+      return undefined as T;
+    }
     return (await response.json()) as T;
   }
 
@@ -153,6 +158,9 @@ export async function callApi<T>(path: string, options: CallApiOptions = {}): Pr
 
     const retryResponse = await doFetch(path, buildRequestInit(options, newAccessToken), options.cache);
     if (retryResponse.ok) {
+      if (retryResponse.status === 204) {
+        return undefined as T;
+      }
       return (await retryResponse.json()) as T;
     }
     if (retryResponse.status === 401) {

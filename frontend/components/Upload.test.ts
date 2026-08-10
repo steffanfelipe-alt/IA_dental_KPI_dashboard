@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { validateFiles } from "./Upload";
 
 // api/config.py: TAMANO_MAXIMO_ARCHIVO_BYTES = 20MB, EXTENSIONES_PERMITIDAS
-// = {".xlsx", ".xls", ".pdf", ".jpg", ".jpeg", ".png"}.
+// = {".xlsx", ".xls", ".csv", ".pdf", ".jpg", ".jpeg", ".png"}.
 const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 
 function makeFile(name: string, sizeBytes: number): File {
@@ -19,7 +19,7 @@ describe("validateFiles (task 5.3 — client pre-validation, no network call)", 
   });
 
   it("accepts every allowed extension", () => {
-    for (const ext of [".xlsx", ".xls", ".pdf", ".jpg", ".jpeg", ".png"]) {
+    for (const ext of [".xlsx", ".xls", ".csv", ".pdf", ".jpg", ".jpeg", ".png"]) {
       expect(validateFiles([makeFile(`archivo${ext}`, 1024)])).toBeNull();
     }
   });

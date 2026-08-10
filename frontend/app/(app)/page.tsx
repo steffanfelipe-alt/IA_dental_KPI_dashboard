@@ -42,14 +42,16 @@ function SparkleIcon() {
 
 /**
  * Welcome landing for the authenticated area (design D4). "Continuar"
- * starts the onboarding wizard at its first step, the consent gate.
+ * starts the onboarding wizard at its first step, the "how it works"
+ * explainer — before the consent gate, so accepting the DPA/BAA isn't
+ * the first thing a new user reads with no context on what it covers.
  */
 export default function AppHome() {
   const router = useRouter();
   const [loggingOut, setLoggingOut] = useState(false);
 
   function handleContinue() {
-    router.push("/onboarding/consent");
+    router.push("/onboarding/como-funciona");
   }
 
   async function handleLogout() {

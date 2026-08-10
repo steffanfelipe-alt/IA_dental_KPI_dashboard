@@ -11,7 +11,7 @@ import type { MigrarResponse } from "@/lib/types/api";
 // mirrored here so bad files are rejected before any network call
 // (spec "File Upload" + D6 client pre-validation), not guessed.
 const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
-const ALLOWED_EXTENSIONS = [".xlsx", ".xls", ".pdf", ".jpg", ".jpeg", ".png"];
+const ALLOWED_EXTENSIONS = [".xlsx", ".xls", ".csv", ".pdf", ".jpg", ".jpeg", ".png"];
 
 function getExtension(filename: string): string {
   const dot = filename.lastIndexOf(".");
@@ -22,7 +22,7 @@ function getExtension(filename: string): string {
 export function validateFiles(files: File[]): string | null {
   for (const file of files) {
     if (!ALLOWED_EXTENSIONS.includes(getExtension(file.name))) {
-      return `"${file.name}" no es un formato admitido. Usá .xlsx, .xls, .pdf, .jpg, .jpeg o .png.`;
+      return `"${file.name}" no es un formato admitido. Usá .xlsx, .xls, .csv, .pdf, .jpg, .jpeg o .png.`;
     }
     if (file.size > MAX_FILE_SIZE_BYTES) {
       return `"${file.name}" supera el tamaño máximo de 20MB.`;
@@ -80,20 +80,50 @@ export function Upload({ clinicaId }: { clinicaId: string }) {
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
-  function handleFilesSelected(selected: FileList | null) {
+  /**
+   * Adds to the current selection rather than replacing it — the input
+   * has `multiple`, but users also reopen the picker (or drop again) to
+   * add more files in separate batches, and each batch should stack.
+   */
+  function addFiles(selected: FileList | null) {
     setError(null);
     if (!selected || selected.length === 0) {
       return;
     }
-    const nextFiles = Array.from(selected);
-    const validationError = validateFiles(nextFiles);
+    const incoming = Array.from(selected);
+    const validationError = validateFiles(incoming);
     if (validationError) {
       setError(validationError);
-      setFiles([]);
       return;
     }
-    setFiles(nextFiles);
+    setFiles((prev) => {
+      const existingKeys = new Set(prev.map((file) => `${file.name}-${file.size}`));
+      const deduped = incoming.filter((file) => !existingKeys.has(`${file.name}-${file.size}`));
+      return [...prev, ...deduped];
+    });
+  }
+
+  function handleInputChange(event: React.ChangeEvent<HTMLInputElement>) {
+    addFiles(event.target.files);
+    // Reset so picking the exact same file again still fires onChange.
+    event.target.value = "";
+  }
+
+  function handleDrop(event: React.DragEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    setIsDragging(false);
+    addFiles(event.dataTransfer.files);
+  }
+
+  function handleDragOver(event: React.DragEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    setIsDragging(true);
+  }
+
+  function handleDragLeave() {
+    setIsDragging(false);
   }
 
   function handleRemove(index: number) {
@@ -135,6 +165,14 @@ export function Upload({ clinicaId }: { clinicaId: string }) {
 
     const resultado = body as MigrarResponse;
     if (resultado.conflictos_pendientes && resultado.conflictos_pendientes.length > 0) {
+      // The backend never persists `conflictos_pendientes` — it only ever
+      // appears in this response body (see `parser/pipeline.py`'s
+      // `procesar_migracion`/`resolver_conflicto`, both return it inline,
+      // with no corresponding GET route). `conflictos/page.tsx` is a fresh
+      // navigation with no props from here, so `sessionStorage` is the
+      // bridge that carries the list across that navigation; the
+      // conflicts page reads and clears this same key on mount.
+      sessionStorage.setItem(`onboarding:conflictos:${clinicaId}`, JSON.stringify(resultado.conflictos_pendientes));
       router.push(`/onboarding/${clinicaId}/conflictos`);
       return;
     }
@@ -147,7 +185,7 @@ export function Upload({ clinicaId }: { clinicaId: string }) {
         <div className="space-y-6">
           <h1 className="text-2xl font-semibold text-ink-900">Subí tus archivos</h1>
           <p className="text-sm text-ink-600">
-            Planillas (.xlsx, .xls), PDFs o fotos (.jpg, .jpeg, .png) de hasta 20MB cada uno.
+            Planillas (.xlsx, .xls, .csv), PDFs o fotos (.jpg, .jpeg, .png) de hasta 20MB cada uno.
           </p>
 
           {error ? (
@@ -159,13 +197,20 @@ export function Upload({ clinicaId }: { clinicaId: string }) {
           <button
             type="button"
             onClick={() => inputRef.current?.click()}
-            className="flex w-full flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-primary-200 bg-primary-50/40 px-4 py-8 text-center transition-colors hover:border-primary-300"
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            className={`flex w-full flex-col items-center gap-2 rounded-2xl border-2 border-dashed px-4 py-8 text-center transition-colors ${
+              isDragging ? "border-primary-400 bg-primary-50" : "border-primary-200 bg-primary-50/40 hover:border-primary-300"
+            }`}
           >
             <span className="flex h-12 w-12 items-center justify-center rounded-full bg-primary-50 text-primary-500">
               <UploadCloudIcon />
             </span>
-            <span className="text-sm font-medium text-ink-900">Hacé clic para elegir archivos</span>
-            <span className="text-xs text-ink-400">.xlsx, .xls, .pdf, .jpg, .jpeg, .png — máx. 20MB</span>
+            <span className="text-sm font-medium text-ink-900">
+              Arrastrá tus archivos acá o hacé clic para elegirlos
+            </span>
+            <span className="text-xs text-ink-400">.xlsx, .xls, .csv, .pdf, .jpg, .jpeg, .png — máx. 20MB</span>
           </button>
 
           <input
@@ -174,7 +219,7 @@ export function Upload({ clinicaId }: { clinicaId: string }) {
             multiple
             accept={ALLOWED_EXTENSIONS.join(",")}
             className="hidden"
-            onChange={(event) => handleFilesSelected(event.target.files)}
+            onChange={handleInputChange}
           />
 
           {files.length > 0 ? (

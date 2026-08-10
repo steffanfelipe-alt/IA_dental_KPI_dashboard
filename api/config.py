@@ -39,7 +39,7 @@ except ImportError:  # pragma: no cover
 # resúmenes en PDF, fotos de pantalla/facturación). Ajustar si el negocio
 # define un límite distinto.
 TAMANO_MAXIMO_ARCHIVO_BYTES = 20 * 1024 * 1024  # 20 MB
-EXTENSIONES_PERMITIDAS = {".xlsx", ".xls", ".pdf", ".jpg", ".jpeg", ".png"}
+EXTENSIONES_PERMITIDAS = {".xlsx", ".xls", ".csv", ".pdf", ".jpg", ".jpeg", ".png"}
 
 
 def obtener_cliente_supabase_anon() -> Any:

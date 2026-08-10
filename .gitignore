@@ -4,3 +4,10 @@ __pycache__/
 .env
 venv/
 parser/datos_clinica_real/
+
+# frontend (Next.js) — see frontend/.gitignore for the CNA-generated
+# nested rules; these root-level patterns are the ones sdd-tasks 1.2
+# calls for explicitly.
+node_modules/
+.next/
+.env*.local

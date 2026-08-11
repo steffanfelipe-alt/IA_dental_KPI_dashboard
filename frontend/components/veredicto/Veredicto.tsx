@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Panel } from "@/components/ui/Panel";
 import type { DiagnosticoResponse, InformeResponse } from "@/lib/types/api";
 import type { MetricaCalculada } from "@/lib/types/metricas";
 import { SectionNav, type VeredictoSection } from "@/components/veredicto/SectionNav";
 import { MetricasGrid } from "@/components/veredicto/MetricasGrid";
 import { MetricDetail } from "@/components/veredicto/MetricDetail";
+import { DiagnosticoView } from "@/components/veredicto/DiagnosticoView";
+import { ProximosPasosView } from "@/components/veredicto/ProximosPasosView";
 
 /**
  * components/veredicto/Veredicto.tsx
@@ -19,10 +20,10 @@ import { MetricDetail } from "@/components/veredicto/MetricDetail";
  * passes mock data down as props; this component only handles
  * client-side interactivity.
  *
- * Métricas renders the real grid + drill-down (`MetricasGrid`/
- * `MetricCard`/`MetricDetail`, Phase 3). Diagnóstico and Próximos pasos
- * bodies below are still placeholders — `DiagnosticoView` and
- * `ProximosPasosView` are Phase 4 work, out of scope for this PR.
+ * All 3 sections now render real views: Métricas via `MetricasGrid`/
+ * `MetricCard`/`MetricDetail` (Phase 3), Diagnóstico via `DiagnosticoView`
+ * and Próximos pasos via `ProximosPasosView` (both Phase 4, closing out
+ * this change).
  */
 export function Veredicto({
   diagnostico,
@@ -53,22 +54,9 @@ export function Veredicto({
         )
       ) : null}
 
-      {section === "diagnostico" ? (
-        <Panel>
-          <p className="text-sm text-ink-600">
-            Sección Diagnóstico ({diagnostico.diagnostico.length} hallazgos) — vista en construcción.
-          </p>
-        </Panel>
-      ) : null}
+      {section === "diagnostico" ? <DiagnosticoView diagnostico={diagnostico} informe={informe} /> : null}
 
-      {section === "proximos" ? (
-        <Panel>
-          <p className="text-sm text-ink-600">
-            Sección Próximos pasos ({informe.texto.length > 0 ? "informe disponible" : "sin informe"}) — vista en
-            construcción.
-          </p>
-        </Panel>
-      ) : null}
+      {section === "proximos" ? <ProximosPasosView diagnostico={diagnostico} /> : null}
     </main>
   );
 }

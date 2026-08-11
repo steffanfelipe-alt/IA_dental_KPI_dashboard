@@ -68,13 +68,13 @@ const secciones = [
     icon: ScanIcon,
     titulo: "Qué hace el sistema con eso",
     texto:
-      "Extrae las variables clave de cada archivo (turnos, ausentismo, facturación, pacientes nuevos, etc.), las cruza con un set fijo de fórmulas de indicadores odontológicos y las compara contra benchmarks reales del mercado argentino — no promedios genéricos de otro país.",
+      "Extrae las variables clave de cada archivo (turnos, ausentismo, facturación, pacientes nuevos, etc.), las cruza con un set fijo de fórmulas de indicadores odontológicos y las compara contra benchmarks reales del mercado argentino.",
   },
   {
     icon: ReportIcon,
     titulo: "Qué te va a devolver",
     texto:
-      "Un diagnóstico con las anomalías que encuentra en tu clínica (por ejemplo: fuga de pacientes, ausentismo alto, rentabilidad baja en algún sillón), la hipótesis detrás de cada una y qué tan sólida es la evidencia. Nunca inventa soluciones: cada anomalía viene con recomendaciones concretas de un catálogo cerrado de intervenciones ya validadas.",
+      "Un diagnóstico con las anomalías que encuentra en tu clínica (por ejemplo: fuga de pacientes, ausentismo alto, rentabilidad baja en algún sillón), la hipótesis detrás de cada una y qué tan sólida es la evidencia. Nunca inventa soluciones.",
   },
 ];
 

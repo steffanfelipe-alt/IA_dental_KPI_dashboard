@@ -97,8 +97,9 @@ export default function ComoFuncionaPage() {
           <div>
             <h1 className="text-2xl font-semibold text-ink-900">Cómo funciona</h1>
             <p className="text-sm text-ink-600">
-              El objetivo es simple: que entiendas con datos reales de tu clínica en qué estás perdiendo
-              plata o pacientes, y qué podés hacer al respecto — no un promedio genérico del sector.
+              El objetivo de esta primera fase del sistema es simple: que con datos reales de tu clínica
+              de períodos anteriores entiendas dónde están tus fortalezas y puntos débiles, para luego
+              brindarte soluciones que optimicen tu sistema de manera precisa.
             </p>
           </div>
 

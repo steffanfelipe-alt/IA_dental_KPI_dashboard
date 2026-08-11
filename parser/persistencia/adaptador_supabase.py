@@ -74,7 +74,16 @@ def _ahora_iso() -> str:
 def _fila_desde_variable(clinica_id: str, variable: str, vv: VariableValue) -> dict[str, Any]:
     """Traduce un VariableValue a la forma de fila de `variables`. Todo lo
     anidado/opcional que no tiene columna propia va a `detalle` (None si
-    no hay nada que guardar, para no ensuciar la fila con claves vacías)."""
+    no hay nada que guardar, para no ensuciar la fila con claves vacías).
+
+    La columna `valor` es `double precision` (schema.sql) pero
+    `VariableValue.valor` es `Any` — las 5 variables de tipo "dict" de
+    VARIABLE_TYPES (desgloses {categoria: valor}, ver excel_parser.py
+    `_agregar_dict`) guardan ahí un dict, no un escalar. Postgres
+    rechaza eso con `invalid input syntax for type double precision`
+    (bug real visto en producción con horas_tarea_manual_semana). Un
+    valor no numérico va a `detalle["valor"]` en cambio, y la columna
+    `valor` queda en None — `_variable_desde_fila` es el inverso."""
     detalle: dict[str, Any] = {}
     if vv.serie is not None:
         detalle["serie"] = vv.serie
@@ -87,10 +96,15 @@ def _fila_desde_variable(clinica_id: str, variable: str, vv: VariableValue) -> d
     if vv.trazabilidad is not None:
         detalle["trazabilidad"] = asdict(vv.trazabilidad)
 
+    valor_columna: Any = vv.valor
+    if not isinstance(vv.valor, (int, float)) or isinstance(vv.valor, bool):
+        detalle["valor"] = vv.valor
+        valor_columna = None
+
     return {
         "clinica_id": clinica_id,
         "variable": variable,
-        "valor": vv.valor,
+        "valor": valor_columna,
         "periodo": vv.periodo,
         "fuente": vv.fuente,
         "confianza": vv.confianza,
@@ -106,7 +120,7 @@ def _variable_desde_fila(fila: dict[str, Any]) -> VariableValue:
     detalle = fila.get("detalle") or {}
     trazabilidad_dict = detalle.get("trazabilidad")
     return VariableValue(
-        valor=fila["valor"],
+        valor=detalle["valor"] if "valor" in detalle else fila["valor"],
         fuente=fila["fuente"],
         confianza=fila["confianza"],
         archivo_origen=fila.get("archivo_origen"),

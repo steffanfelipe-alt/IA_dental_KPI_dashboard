@@ -23,7 +23,7 @@ export function MetricCard({ metrica, onClick }: { metrica: MetricaCalculada; on
     <button
       type="button"
       onClick={onClick}
-      className="flex w-64 shrink-0 flex-col justify-between gap-3 rounded-2xl border border-black/5 bg-white p-5 text-left shadow-sm transition-shadow hover:shadow-md"
+      className="flex w-full flex-col justify-between gap-3 rounded-2xl border border-black/5 bg-white p-5 text-left shadow-sm transition-shadow hover:shadow-md"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">

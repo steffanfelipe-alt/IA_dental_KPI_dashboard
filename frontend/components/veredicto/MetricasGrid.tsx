@@ -6,11 +6,13 @@ import type { MetricaCalculada } from "@/lib/types/metricas";
 /**
  * components/veredicto/MetricasGrid.tsx
  *
- * Spec "Métricas section renders a scrollable horizontal grid": one
- * rectangle per metric, laid out side by side, scrollable with the
- * mouse when there are more metrics than fit on screen. `overflow-x-auto`
- * on a `flex` row gives native mouse-wheel/trackpad horizontal scroll
- * without extra JS.
+ * Spec "veredicto-metrics-layout": one rectangle per metric in a 4-column
+ * CSS grid that wraps into additional rows instead of scrolling
+ * horizontally — the previous `overflow-x-auto` flex row hid metrics
+ * past the first screenful behind an undiscoverable horizontal scroll.
+ * Any overflow now scrolls vertically with the rest of the page (the
+ * parent `Veredicto` `<main>` has no fixed height/overflow clip already).
+ * Responsive down to 1 column on mobile, 2 on `sm`, 4 from `lg` up.
  */
 export function MetricasGrid({
   metricas,
@@ -20,7 +22,7 @@ export function MetricasGrid({
   onSelect: (kpiId: number) => void;
 }) {
   return (
-    <div className="flex gap-4 overflow-x-auto pb-2">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {metricas.map((metrica) => (
         <MetricCard key={metrica.kpi_id} metrica={metrica} onClick={() => onSelect(metrica.kpi_id)} />
       ))}

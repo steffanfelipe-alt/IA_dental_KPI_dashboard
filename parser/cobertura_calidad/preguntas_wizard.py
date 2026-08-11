@@ -16,7 +16,9 @@ guía aparecía como proporción o como pregunta cualitativa — son cosas
 distintas aunque compartan número de referencia.
 """
 
+import re
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -157,3 +159,35 @@ PREGUNTAS_WIZARD: dict[str, PreguntaWizard] = {
 
 def obtener_pregunta(variable: str) -> PreguntaWizard | None:
     return PREGUNTAS_WIZARD.get(variable)
+
+
+def _variables_por_pregunta_guia() -> dict[str, set[str]]:
+    """Inversa de `PREGUNTAS_WIZARD`: por cada P# de la guía (`referencia_guia`
+    puede listar más de uno, ej. "P8, P28"), el set de variables del wizard
+    que lo respaldan. Un mismo P# puede recibir variables de varias entradas
+    distintas (ej. P3 lo respaldan `turnos_agendados`, `turnos_asistidos`,
+    `no_shows` y `turnos_cancelados`)."""
+    variables_por_pregunta: dict[str, set[str]] = {}
+    for variable, pregunta in PREGUNTAS_WIZARD.items():
+        for id_pregunta in re.split(r"[,\s]+", pregunta.referencia_guia.strip()):
+            if id_pregunta:
+                variables_por_pregunta.setdefault(id_pregunta, set()).add(variable)
+    return variables_por_pregunta
+
+
+def preguntas_cubiertas_por_variables(variables: dict[str, Any]) -> set[str]:
+    """Catalog question ids (P#) whose EVERY backing wizard variable is
+    present.
+
+    Filtro, no reemplazo (ver design "Reconciliation = FILTER, not
+    REPLACE"): un P# sólo se considera cubierto cuando TODAS las variables
+    que lo respaldan ya están en `variables` (típicamente lo que devuelve
+    `repo.cargar_variables`) — si falta una sola, la pregunta de la guía
+    sigue haciendo falta para no perder el resto de los datos que todavía
+    no se migraron. Preguntas sin ninguna variable de wizard mapeada
+    (cualitativas, ej. P1) nunca aparecen en el resultado."""
+    return {
+        id_pregunta
+        for id_pregunta, variables_requeridas in _variables_por_pregunta_guia().items()
+        if all(variable in variables for variable in variables_requeridas)
+    }

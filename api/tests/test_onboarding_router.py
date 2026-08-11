@@ -182,6 +182,29 @@ _PREGUNTAS_FALSAS = {
     "P1": PreguntaGuia(id="P1", texto="¿Pregunta uno?", bloque=1, nombre_bloque="Bloque 1", nucleo=True, requerida_diagnostico=True),
 }
 
+# P3 es una pregunta REAL de PREGUNTAS_WIZARD (no monkeypatcheada): la
+# respaldan turnos_agendados/turnos_asistidos/no_shows/turnos_cancelados.
+# P1 no tiene ninguna variable de wizard mapeada -- sirve para probar que
+# una pregunta puramente cualitativa nunca se excluye por cobertura.
+_PREGUNTAS_CON_P3 = {
+    **_PREGUNTAS_FALSAS,
+    "P3": PreguntaGuia(
+        id="P3",
+        texto="¿Cuántos turnos agendan, asisten y cuántos son no-show/cancelación?",
+        bloque=1,
+        nombre_bloque="Bloque 1",
+        nucleo=True,
+        requerida_diagnostico=True,
+    ),
+}
+
+_VARIABLES_P3_COMPLETAS = {
+    "turnos_agendados": {"valor": 40, "fuente": "migracion_excel"},
+    "turnos_asistidos": {"valor": 35, "fuente": "migracion_excel"},
+    "no_shows": {"valor": 3, "fuente": "migracion_excel"},
+    "turnos_cancelados": {"valor": 2, "fuente": "migracion_excel"},
+}
+
 
 def test_guia_y_respuestas_hacen_roundtrip(cliente, repo_falso, monkeypatch):
     monkeypatch.setattr(onboarding, "PREGUNTAS_REQUERIDAS_ONBOARDING", _PREGUNTAS_FALSAS)
@@ -202,6 +225,36 @@ def test_guia_y_respuestas_hacen_roundtrip(cliente, repo_falso, monkeypatch):
 
     respuesta_final = cliente.get("/onboarding/clinica-1/guia")
     assert respuesta_final.json()["preguntas"][0]["respuesta"] == "Se agenda a mano en una libreta."
+
+
+# --- GET /guia — filtro de cobertura (change veredicto-wizard-usability-fixes) ---
+
+
+def test_guia_omite_pregunta_totalmente_cubierta_por_variables_persistidas(cliente, repo_falso, monkeypatch):
+    monkeypatch.setattr(onboarding, "PREGUNTAS_REQUERIDAS_ONBOARDING", _PREGUNTAS_CON_P3)
+    repo_falso.variables = dict(_VARIABLES_P3_COMPLETAS)
+
+    respuesta = cliente.get("/onboarding/clinica-1/guia")
+
+    ids = [p["id"] for p in respuesta.json()["preguntas"]]
+    assert "P3" not in ids
+    assert "P1" in ids  # sin mapeo de wizard, P1 siempre se pregunta
+
+
+def test_guia_mantiene_pregunta_parcialmente_cubierta_con_texto_sin_modificar(cliente, repo_falso, monkeypatch):
+    monkeypatch.setattr(onboarding, "PREGUNTAS_REQUERIDAS_ONBOARDING", _PREGUNTAS_CON_P3)
+    repo_falso.variables = {
+        "turnos_agendados": {"valor": 40, "fuente": "migracion_excel"},
+        "turnos_asistidos": {"valor": 35, "fuente": "migracion_excel"},
+        "turnos_cancelados": {"valor": 2, "fuente": "migracion_excel"},
+        # no_shows falta -> P3 sigue pendiente
+    }
+
+    respuesta = cliente.get("/onboarding/clinica-1/guia")
+
+    preguntas = {p["id"]: p for p in respuesta.json()["preguntas"]}
+    assert "P3" in preguntas
+    assert preguntas["P3"]["texto"] == _PREGUNTAS_CON_P3["P3"].texto
 
 
 # --- GET /estado ------------------------------------------------------------
@@ -245,3 +298,23 @@ def test_estado_completo_cuando_migracion_y_respuestas_estan_ok(cliente, repo_fa
     assert cuerpo["completo"] is True
     assert cuerpo["migracion_completada"] is True
     assert cuerpo["preguntas_faltantes"] == []
+
+
+def test_estado_completo_cuando_variables_persistidas_cubren_pregunta_nucleo_sin_respuesta(
+    cliente, repo_falso, monkeypatch
+):
+    # Change veredicto-wizard-usability-fixes: P3 nunca se contesta a mano
+    # en la Guía (no hay entrada en `respuestas`) pero las 4 variables que
+    # lo respaldan ya están persistidas -- /estado debe llegar a
+    # completo=true igual que /guia deja de pedirlo.
+    monkeypatch.setattr(onboarding, "PREGUNTAS_REQUERIDAS_ONBOARDING", _PREGUNTAS_CON_P3)
+    repo_falso.migracion_completada = True
+    repo_falso.respuestas = {"P1": "ya contestada"}
+    repo_falso.variables = dict(_VARIABLES_P3_COMPLETAS)
+
+    respuesta = cliente.get("/onboarding/clinica-1/estado")
+
+    assert respuesta.status_code == 200
+    cuerpo = respuesta.json()
+    assert cuerpo["completo"] is True
+    assert "P3" not in cuerpo["preguntas_faltantes"]

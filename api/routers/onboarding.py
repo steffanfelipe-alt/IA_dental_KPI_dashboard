@@ -53,6 +53,7 @@ from api.schemas.onboarding import (
 )
 from api.shim_uploads import envolver_uploads
 from parser.archivos_temporales import escribir_temporales
+from parser.cobertura_calidad.preguntas_wizard import preguntas_cubiertas_por_variables
 from parser.diagnostico.guia_diagnostico import PREGUNTAS_REQUERIDAS_ONBOARDING
 from parser.pipeline import procesar_migracion, resolver_conflicto
 
@@ -130,7 +131,13 @@ def resolver_conflicto_de_variable(
 
 @router.get("/{clinica_id}/guia")
 def obtener_guia(clinica_id: OwnerDeClinicaDep, repo: RepositorioDep) -> GuiaResponse:
+    # Design "Filter the catalog server-side in /guia" (change
+    # veredicto-wizard-usability-fixes): una pregunta cuantitativa del
+    # catálogo se omite cuando TODAS las variables de wizard que la
+    # respaldan ya están en `variables` (extraídas por una migración
+    # previa) — recalculado en cada GET, nunca cacheado desde /migrar.
     respuestas = repo.cargar_respuestas_diagnostico(clinica_id)
+    preguntas_cubiertas = frozenset(preguntas_cubiertas_por_variables(repo.cargar_variables(clinica_id)))
     preguntas = [
         PreguntaGuiaResponse(
             id=pregunta.id,
@@ -141,6 +148,7 @@ def obtener_guia(clinica_id: OwnerDeClinicaDep, repo: RepositorioDep) -> GuiaRes
             respuesta=respuestas.get(pregunta.id),
         )
         for pregunta in PREGUNTAS_REQUERIDAS_ONBOARDING.values()
+        if pregunta.id not in preguntas_cubiertas
     ]
     return GuiaResponse(preguntas=preguntas)
 
@@ -161,9 +169,17 @@ def obtener_estado(clinica_id: OwnerDeClinicaDep, repo: RepositorioDep) -> Estad
     # la función compartida) para que los tests existentes que
     # monkeypatchean `onboarding.PREGUNTAS_REQUERIDAS_ONBOARDING` sigan
     # funcionando sin cambios.
+    #
+    # `preguntas_cubiertas` (change veredicto-wizard-usability-fixes):
+    # mismo cálculo que `obtener_guia` — si no se descontara acá, una
+    # pregunta que /guia ya deja de pedir seguiría contando como
+    # faltante y `completo` nunca llegaría a `true`.
     migracion_completada = repo.esta_migracion_completada(clinica_id)
     respuestas = repo.cargar_respuestas_diagnostico(clinica_id)
-    estado = calcular_estado_onboarding(migracion_completada, respuestas, PREGUNTAS_REQUERIDAS_ONBOARDING)
+    preguntas_cubiertas = frozenset(preguntas_cubiertas_por_variables(repo.cargar_variables(clinica_id)))
+    estado = calcular_estado_onboarding(
+        migracion_completada, respuestas, PREGUNTAS_REQUERIDAS_ONBOARDING, preguntas_cubiertas
+    )
     return EstadoResponse(
         completo=estado.completo,
         migracion_completada=estado.migracion_completada,

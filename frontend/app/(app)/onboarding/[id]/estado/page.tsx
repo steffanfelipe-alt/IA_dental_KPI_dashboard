@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { fetchEstadoReadOnly } from "../layout";
 
@@ -21,14 +22,15 @@ function CheckIcon() {
 
 /**
  * Spec "Estado Refetch and Confirmation": renders only when
- * `estado.completo === true`, and MUST offer no navigation into
- * diagnóstico/informe UI — that surface doesn't exist yet in this
- * codebase, so this is intentionally a dead-end confirmation, not a
- * dashboard link. Backward redirects for the other two states
- * (migration not done / guide not finished) mirror `conflictos/page.tsx`
- * and `[id]/layout.tsx`'s guard comment — a Server Component here has no
- * pathname to compare against, but `estado/page.tsx` knows its own
- * identity just by being this file.
+ * `estado.completo === true`. Backward redirects for the other two
+ * states (migration not done / guide not finished) mirror
+ * `conflictos/page.tsx` and `[id]/layout.tsx`'s guard comment — a Server
+ * Component here has no pathname to compare against, but
+ * `estado/page.tsx` knows its own identity just by being this file.
+ *
+ * Spec "Estado page links into the veredicto page": this page now offers
+ * a CTA into `/onboarding/[id]/veredicto`, the diagnóstico/informe
+ * surface built starting in this change's Phase 2.
  */
 export default async function OnboardingEstadoPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -63,6 +65,13 @@ export default async function OnboardingEstadoPage({ params }: { params: Promise
             Terminaste el onboarding. Ya tenemos todo lo que necesitábamos de tu clínica para seguir con el
             siguiente paso.
           </p>
+
+          <Link
+            href={`/onboarding/${id}/veredicto`}
+            className="flex w-full items-center justify-center rounded-xl bg-primary-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-primary-700"
+          >
+            Ver veredicto
+          </Link>
         </div>
       </Card>
     </main>

@@ -7,15 +7,22 @@ import type { MetricaCalculada } from "@/lib/types/metricas";
 
 /**
  * `ResponsiveContainer` measures 0x0 in jsdom (design doc gotcha), so the
- * Métricas grid/detail (Phase 3) render charts through a mocked `recharts`
- * module here — these tests assert DOM/state structure, not chart SVG.
+ * Métricas grid/detail (Phase 3, `LineChart`) and the Diagnóstico estado
+ * distribution chart (Phase 4, `BarChart`) render through a mocked
+ * `recharts` module here — these tests assert DOM/state structure, not
+ * chart SVG.
  */
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   LineChart: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
   Line: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  BarChart: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  Bar: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  CartesianGrid: () => null,
   XAxis: () => null,
+  YAxis: () => null,
   LabelList: () => null,
+  Cell: () => null,
 }));
 
 const diagnostico: DiagnosticoResponse = {
@@ -66,23 +73,28 @@ describe("Veredicto (task 2.6)", () => {
     expect(screen.getByRole("button", { name: /^Métricas$/ }).getAttribute("aria-current")).toBe("true");
   });
 
-  it("switches to Diagnóstico when its nav item is clicked", () => {
+  it("switches to Diagnóstico when its nav item is clicked, rendering the real DiagnosticoView", () => {
     render(<Veredicto diagnostico={diagnostico} informe={informe} metricas={metricas} />);
 
     fireEvent.click(screen.getByRole("button", { name: /Diagnóstico/ }));
 
-    expect(screen.getByText(/Sección Diagnóstico/)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Resumen" })).toBeTruthy();
+    expect(screen.getByText("Texto de prueba.")).toBeTruthy();
+    expect(screen.getByText(/Puntos débiles \(1\)/)).toBeTruthy();
+    expect(screen.getByText("Tasa de no-show")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Tasa de no-show/ })).toBeNull();
     expect(screen.getByRole("button", { name: /Diagnóstico/ }).getAttribute("aria-current")).toBe("true");
   });
 
-  it("switches to Próximos pasos when its nav item is clicked", () => {
+  it("switches to Próximos pasos when its nav item is clicked, rendering the real ProximosPasosView", () => {
     render(<Veredicto diagnostico={diagnostico} informe={informe} metricas={metricas} />);
 
     fireEvent.click(screen.getByRole("button", { name: /Próximos pasos/ }));
 
-    expect(screen.getByText(/Sección Próximos pasos/)).toBeTruthy();
-    expect(screen.queryByText(/Sección Diagnóstico/)).toBeNull();
+    expect(screen.getByRole("heading", { name: "Próximos pasos sugeridos" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Tasa de no-show" })).toBeTruthy();
+    expect(screen.getByText(/Revisar este hallazgo con el equipo/)).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Resumen" })).toBeNull();
     expect(screen.getByRole("button", { name: /Próximos pasos/ }).getAttribute("aria-current")).toBe("true");
   });
 });

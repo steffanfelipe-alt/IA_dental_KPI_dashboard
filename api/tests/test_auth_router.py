@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from supabase_auth.errors import AuthApiError
 
 from api.config import obtener_cliente_supabase_anon
 from api.main import app
@@ -46,7 +47,7 @@ class _ClienteAnonFalso:
     def sign_up(self, credenciales: dict):
         email = credenciales["email"]
         if email in self._passwords_por_email:
-            raise RuntimeError("email ya registrado")
+            raise AuthApiError("User already registered", status=422, code="user_already_exists")
         self._passwords_por_email[email] = credenciales["password"]
         usuario = SimpleNamespace(id=f"user-{email}", email=email)
         return SimpleNamespace(user=usuario, session=self._sesion_falsa())

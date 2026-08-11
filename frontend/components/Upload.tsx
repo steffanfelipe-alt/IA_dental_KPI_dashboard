@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { isApiErrorEnvelope } from "@/lib/types/errors";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { LoadingScreen } from "@/components/ui/LoadingScreen";
 import type { MigrarResponse } from "@/lib/types/api";
 
 // api/config.py: TAMANO_MAXIMO_ARCHIVO_BYTES / EXTENSIONES_PERMITIDAS —
@@ -130,6 +131,16 @@ export function Upload({ clinicaId }: { clinicaId: string }) {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   }
 
+  // Spec "Upload shows extended-wait loading feedback": the blocking
+  // `/migrar` call can take a while, so it replaces the whole form with
+  // `LoadingScreen` (mirrors `GuiaForm.tsx` L264's `if (!data) return
+  // <LoadingScreen />`) instead of only disabling the submit button.
+  // The component stays mounted, so `files` survives; on error
+  // `submitting` goes back to `false` and the form branch re-renders.
+  if (submitting) {
+    return <LoadingScreen mensaje="Esto puede tardar un momento…" />;
+  }
+
   async function handleSubmit() {
     if (files.length === 0) {
       setError("Seleccioná al menos un archivo.");
@@ -243,8 +254,10 @@ export function Upload({ clinicaId }: { clinicaId: string }) {
             </ul>
           ) : null}
 
-          <Button type="button" onClick={handleSubmit} disabled={submitting || files.length === 0}>
-            {submitting ? "Subiendo…" : "Subir y continuar"}
+          {/* `submitting` is always false here — the early return above
+              swaps in `LoadingScreen` for the whole form while it's true. */}
+          <Button type="button" onClick={handleSubmit} disabled={files.length === 0}>
+            Subir y continuar
           </Button>
         </div>
       </Card>

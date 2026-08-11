@@ -17,7 +17,13 @@ function ToothbrushIcon() {
   );
 }
 
-export function LoadingScreen() {
+/**
+ * `mensaje` is optional and rendered in place of the default tagline —
+ * used by callers with an extended-wait operation (e.g. `Upload.tsx`'s
+ * blocking `/migrar` call) to communicate why the wait might take a
+ * while. Omitting it keeps the original "AI dental dashboard" tagline.
+ */
+export function LoadingScreen({ mensaje }: { mensaje?: string } = {}) {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 p-8">
       <div className="relative flex h-20 w-20 items-center justify-center">
@@ -29,7 +35,13 @@ export function LoadingScreen() {
       </div>
 
       <p className="text-lg font-semibold text-ink-900">
-        <span className="text-primary-600">AI</span> dental dashboard
+        {mensaje ? (
+          mensaje
+        ) : (
+          <>
+            <span className="text-primary-600">AI</span> dental dashboard
+          </>
+        )}
       </p>
     </main>
   );

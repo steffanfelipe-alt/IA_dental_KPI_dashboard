@@ -68,6 +68,7 @@ jobs:
             parser.pacientes.test_metricas_paciente
             parser.vocabulario.test_periodos
             parser.test_pipeline
+            parser.cobertura_calidad.test_preguntas_wizard
             parser.test_probar_manual
             parser.diagnostico.test_priorizacion_extendida
             parser.vocabulario.test_puerto_llm

@@ -134,6 +134,25 @@ def test_guardar_y_cargar_variables_hace_roundtrip_de_todos_los_campos():
     assert cargadas == {"no_shows": vv}
 
 
+def test_guardar_y_cargar_variable_tipo_dict_no_manda_un_dict_a_la_columna_numerica():
+    # Bug real de producción: variables tipo "dict" de VARIABLE_TYPES (ej.
+    # horas_tarea_manual_semana) traen un desglose {"total": 21.0} en
+    # `.valor`. La columna `valor` de Postgres es `double precision` — si
+    # el dict va directo ahí, Postgres rechaza el INSERT/UPSERT entero.
+    vv = VariableValue(valor={"total": 21.0}, fuente="migracion_excel", confianza=0.8)
+    cliente = _ClienteSupabaseFalso()
+    adaptador = AdaptadorSupabase(cliente=cliente)
+
+    adaptador.guardar_variables("clinica-1", {"horas_tarea_manual_semana": vv})
+
+    fila_guardada = cliente.filas_por_tabla["variables"][0]
+    assert fila_guardada["valor"] is None, "la columna numérica no debe recibir un dict"
+    assert fila_guardada["detalle"]["valor"] == {"total": 21.0}
+
+    cargadas = adaptador.cargar_variables("clinica-1")
+    assert cargadas["horas_tarea_manual_semana"] == vv
+
+
 def test_guardar_variables_upsert_pisa_el_valor_anterior_de_la_misma_variable():
     cliente = _ClienteSupabaseFalso()
     adaptador = AdaptadorSupabase(cliente=cliente)

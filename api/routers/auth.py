@@ -21,20 +21,37 @@ en threadpool.
 """
 
 from fastapi import APIRouter, HTTPException, status
+from supabase_auth.errors import AuthApiError
 
 from api.deps import ClienteAnonDep
 from api.schemas.auth import LoginRequest, RefreshRequest, SessionResponse, SignupRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+_CODIGOS_EMAIL_DUPLICADO = {"user_already_exists", "email_exists", "identity_already_exists"}
+_CODIGOS_RATE_LIMIT = {"over_request_rate_limit", "over_email_send_rate_limit", "over_sms_send_rate_limit"}
+_CODIGOS_INPUT_INVALIDO = {"weak_password", "email_address_invalid", "validation_failed"}
+
 
 @router.post("/signup", status_code=status.HTTP_201_CREATED)
 def signup(datos: SignupRequest, cliente_anon: ClienteAnonDep) -> SessionResponse:
     try:
         respuesta = cliente_anon.auth.sign_up({"email": datos.email, "password": datos.password})
+    except AuthApiError as error:
+        if error.code in _CODIGOS_EMAIL_DUPLICADO:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Ese email ya está registrado.") from error
+        if error.code in _CODIGOS_RATE_LIMIT:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS, "Demasiados intentos, esperá unos minutos y probá de nuevo."
+            ) from error
+        if error.code in _CODIGOS_INPUT_INVALIDO:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, error.message) from error
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "No se pudo crear el usuario, intentá de nuevo más tarde."
+        ) from error
     except Exception as error:
         raise HTTPException(
-            status.HTTP_409_CONFLICT, "No se pudo crear el usuario (¿el email ya está registrado?)."
+            status.HTTP_502_BAD_GATEWAY, "No se pudo crear el usuario, intentá de nuevo más tarde."
         ) from error
 
     usuario = getattr(respuesta, "user", None)

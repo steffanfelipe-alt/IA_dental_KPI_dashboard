@@ -68,13 +68,13 @@ const secciones = [
     icon: ScanIcon,
     titulo: "Qué hace el sistema con eso",
     texto:
-      "Extrae las variables clave de cada archivo (turnos, ausentismo, facturación, pacientes nuevos, etc.), las cruza con un set fijo de fórmulas de indicadores odontológicos y las compara contra benchmarks reales del mercado argentino — no promedios genéricos de otro país.",
+      "Extrae las variables clave de cada archivo (turnos, ausentismo, facturación, pacientes nuevos, etc.), las cruza con un set fijo de fórmulas de indicadores odontológicos y las compara contra benchmarks reales del mercado argentino.",
   },
   {
     icon: ReportIcon,
     titulo: "Qué te va a devolver",
     texto:
-      "Un diagnóstico con las anomalías que encuentra en tu clínica (por ejemplo: fuga de pacientes, ausentismo alto, rentabilidad baja en algún sillón), la hipótesis detrás de cada una y qué tan sólida es la evidencia. Nunca inventa soluciones: cada anomalía viene con recomendaciones concretas de un catálogo cerrado de intervenciones ya validadas.",
+      "Un diagnóstico con las anomalías que encuentra en tu clínica (por ejemplo: fuga de pacientes, ausentismo alto, rentabilidad baja en algún sillón), la hipótesis detrás de cada una y qué tan sólida es la evidencia. Nunca inventa soluciones.",
   },
 ];
 
@@ -97,8 +97,9 @@ export default function ComoFuncionaPage() {
           <div>
             <h1 className="text-2xl font-semibold text-ink-900">Cómo funciona</h1>
             <p className="text-sm text-ink-600">
-              El objetivo es simple: que entiendas con datos reales de tu clínica en qué estás perdiendo
-              plata o pacientes, y qué podés hacer al respecto — no un promedio genérico del sector.
+              El objetivo de esta primera fase del sistema es simple: que con datos reales de tu clínica
+              de períodos anteriores entiendas dónde están tus fortalezas y puntos débiles, para luego
+              brindarte soluciones que optimicen tu sistema de manera precisa.
             </p>
           </div>
 

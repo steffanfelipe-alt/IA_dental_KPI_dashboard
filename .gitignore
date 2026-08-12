@@ -11,3 +11,12 @@ parser/datos_clinica_real/
 node_modules/
 .next/
 .env*.local
+
+# gentle-ai skill tooling — local cache, reproducible via skill-registry refresh
+.agents/
+.atl/
+skills-lock.json
+.claude/skills/developing-with-streamlit
+.claude/skills/fastapi
+.claude/skills/supabase
+.claude/skills/supabase-postgres-best-practices

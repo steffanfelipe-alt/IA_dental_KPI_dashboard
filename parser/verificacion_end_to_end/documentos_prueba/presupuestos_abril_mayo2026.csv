@@ -1,0 +1,37 @@
+fecha_presupuesto,id_paciente,profesional,tratamiento,monto_ars,estado,obra_social,canal_captacion,dias_hasta_respuesta
+2026-04-01,P1201,Dr. Rossi,Conducto + corona,348389,pendiente,OSDE,Telefono,3
+2026-04-03,P1202,Dr. Rossi,Carilla estetica,631858,pendiente,Galeno,Recomendacion,3
+2026-04-05,P1203,Dr. Rossi,Conducto + corona,289258,pendiente,Galeno,WhatsApp,0
+2026-04-07,P1204,Dra. Gimenez,Carilla estetica,631412,aceptado,OSDE,Recomendacion,2
+2026-04-09,P1205,Dr. Falco,Conducto + corona,227414,rechazado,IOMA,Instagram,2
+2026-04-11,P1206,Dra. Gimenez,Ortodoncia (plan completo),412944,pendiente,Particular,Recomendacion,1
+2026-04-13,P1207,Dr. Falco,Blanqueamiento,337370,pendiente,IOMA,WhatsApp,0
+2026-04-15,P1208,Dr. Rossi,Limpieza + control,367419,rechazado,Galeno,Instagram,2
+2026-04-17,P1209,Dra. Gimenez,Carilla estetica,132933,pendiente,OSDE,Instagram,2
+2026-04-19,P1210,Dra. Gimenez,Conducto + corona,458591,aceptado,IOMA,Instagram,0
+2026-04-21,P1211,Dr. Falco,Blanqueamiento,279684,rechazado,Swiss Medical,WhatsApp,1
+2026-04-23,P1212,Dra. Gimenez,Limpieza + control,316702,pendiente,IOMA,Recomendacion,2
+2026-04-25,P1213,Dra. Gimenez,Carilla estetica,400035,pendiente,OSDE,WhatsApp,1
+2026-04-27,P1214,Dra. Weiss,Blanqueamiento,129403,pendiente,Galeno,Instagram,1
+2026-04-29,P1215,Dra. Weiss,Extraccion + implante,541141,pendiente,Swiss Medical,Telefono,1
+2026-05-01,P1216,Dr. Falco,Carilla estetica,509245,rechazado,IOMA,Instagram,4
+2026-05-02,P1217,Dra. Gimenez,Limpieza + control,577488,pendiente,Particular,WhatsApp,4
+2026-05-04,P1218,Dra. Gimenez,Carilla estetica,502666,rechazado,Particular,Recomendacion,2
+2026-05-05,P1219,Dra. Weiss,Limpieza + control,323626,rechazado,Particular,WhatsApp,18
+2026-05-07,P1220,Dr. Falco,Conducto + corona,367757,aceptado,OSDE,Recomendacion,8
+2026-05-08,P1221,Dr. Falco,Limpieza + control,247330,rechazado,Particular,Instagram,0
+2026-05-10,P1222,Dra. Gimenez,Blanqueamiento,229396,rechazado,Galeno,WhatsApp,4
+2026-05-11,P1223,Dra. Weiss,Conducto + corona,177301,aceptado,Swiss Medical,Telefono,12
+2026-05-13,P1224,Dra. Gimenez,Limpieza + control,142582,pendiente,IOMA,WhatsApp,0
+2026-05-14,P1225,Dra. Gimenez,Carilla estetica,558369,rechazado,OSDE,Instagram,2
+2026-05-16,P1226,Dra. Gimenez,Limpieza + control,270922,rechazado,Swiss Medical,Recomendacion,18
+2026-05-17,P1227,Dra. Weiss,Limpieza + control,533417,pendiente,OSDE,Telefono,12
+2026-05-19,P1228,Dr. Falco,Conducto + corona,640828,pendiente,Galeno,Telefono,1
+2026-05-20,P1229,Dr. Rossi,Carilla estetica,121733,pendiente,Particular,WhatsApp,0
+2026-05-22,P1230,Dr. Rossi,Limpieza + control,309565,aceptado,IOMA,Telefono,12
+2026-05-23,P1231,Dra. Weiss,Ortodoncia (plan completo),555948,aceptado,OSDE,WhatsApp,2
+2026-05-25,P1232,Dra. Weiss,Blanqueamiento,504154,aceptado,IOMA,WhatsApp,1
+2026-05-26,P1233,Dr. Rossi,Extraccion + implante,415784,pendiente,OSDE,Telefono,1
+2026-05-28,P1234,Dra. Weiss,Ortodoncia (plan completo),502374,pendiente,Swiss Medical,Recomendacion,4
+2026-05-29,P1235,Dr. Rossi,Extraccion + implante,637057,pendiente,Particular,WhatsApp,4
+2026-05-31,P1236,Dra. Gimenez,Ortodoncia (plan completo),486156,aceptado,IOMA,Telefono,1

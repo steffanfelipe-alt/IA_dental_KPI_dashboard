@@ -1,7 +1,8 @@
 import { getPanel } from "@/lib/data/panel";
 import { resolverClinicaIdActual } from "@/lib/session";
 import { COPY } from "@/lib/copy";
-import { PERIODO_SEARCH_PARAM, PeriodPicker, type PeriodoOption } from "@/components/shell/PeriodPicker";
+import { PERIODO_SEARCH_PARAM } from "@/lib/searchParams";
+import { PeriodPicker, type PeriodoOption } from "@/components/shell/PeriodPicker";
 import { MetricCarousel } from "@/components/metrics/MetricCarousel";
 import { SystemsBlock } from "@/components/systems/SystemsBlock";
 import { ErrorState } from "@/components/ui/ErrorState";

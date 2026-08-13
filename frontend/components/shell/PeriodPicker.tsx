@@ -1,8 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-
-export const PERIODO_SEARCH_PARAM = "periodo";
+import { PERIODO_SEARCH_PARAM } from "@/lib/searchParams";
 
 export interface PeriodoOption {
   value: string;
@@ -17,10 +16,15 @@ export interface PeriodoOption {
  * search param so state is shareable by URL and a server component can
  * read it directly (`getPanel(clinicaId, periodo)` — design's data flow).
  *
- * Not wired into any page yet in this PR (Pantalla A ships in a later
- * work unit) — created now alongside the rest of the shell per the
- * design's file list, ready for that page to render it in its header.
+ * `PERIODO_SEARCH_PARAM` moved to `lib/searchParams.ts` in PR5 — this
+ * file previously defined AND exported it itself, which broke
+ * `panel/page.tsx`'s reading of `?periodo=` (see that module's header
+ * for the full root-cause writeup: importing a runtime constant from a
+ * `"use client"` file into a Server Component silently yields an opaque
+ * reference, not the real value). Re-exported below so existing imports
+ * of `PERIODO_SEARCH_PARAM` from this file keep working.
  */
+export { PERIODO_SEARCH_PARAM };
 export function PeriodPicker({ options, value }: { options: PeriodoOption[]; value: string }) {
   const router = useRouter();
   const pathname = usePathname();

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import type { EstadoSistema, Sistema } from "@/lib/types";
 import { COPY } from "@/lib/copy";
 import { SectionHeading } from "@/components/ui/SectionHeading";
@@ -59,6 +60,17 @@ function PinIcon() {
  * transitions to `sugerido`/`en_proceso` automatically leaves the
  * anchored group and renders exactly once, in A3 — no extra bookkeeping
  * needed for that SPEC scenario.
+ *
+ * PR5 addition: both the A3 main list and the anchored group now link
+ * their system name to `/sistemas/[slug]?from=panel` — closing the
+ * cross-phase gap PR4's apply-progress flagged ("no component yet links
+ * INTO `/sistemas/[slug]` with `?from=panel` or `?from=catalogo`"). The
+ * anchored group wraps only the name in a `Link`, not the whole `<li>`,
+ * because that row also has a "Desanclar" `<button>` sibling — nesting a
+ * `<button>` inside an `<a>` is invalid HTML, so the two interactive
+ * elements stay siblings instead. The A3 main-list rows have no button,
+ * so their whole card is the click target instead (same "single click
+ * target" discipline `MetricCard` uses).
  */
 export function SystemsBlock({ sistemas }: { sistemas: Sistema[] }) {
   const [anclados, setAnclados] = useState<Set<string>>(
@@ -96,17 +108,22 @@ export function SystemsBlock({ sistemas }: { sistemas: Sistema[] }) {
         ) : (
           <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {grupoPrincipal.map((sistema) => (
-              <li key={sistema.slug} className="flex items-start gap-3 rounded-2xl border border-border-subtle bg-surface p-4">
-                <SystemBadge estado={sistema.estado} progresoPct={sistema.progresoPct} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-text-strong">{sistema.nombre}</p>
-                  <div className="mt-1">
-                    <SystemStatusChip estado={sistema.estado} />
+              <li key={sistema.slug} className="rounded-2xl border border-border-subtle bg-surface">
+                <Link
+                  href={`/sistemas/${sistema.slug}?from=panel`}
+                  className="flex items-start gap-3 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-primary-100"
+                >
+                  <SystemBadge estado={sistema.estado} progresoPct={sistema.progresoPct} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-text-strong">{sistema.nombre}</p>
+                    <div className="mt-1">
+                      <SystemStatusChip estado={sistema.estado} />
+                    </div>
+                    {sistema.estado === "sugerido" && sistema.motivoSugerencia ? (
+                      <p className="mt-2 line-clamp-2 text-xs text-text-muted">{sistema.motivoSugerencia}</p>
+                    ) : null}
                   </div>
-                  {sistema.estado === "sugerido" && sistema.motivoSugerencia ? (
-                    <p className="mt-2 line-clamp-2 text-xs text-text-muted">{sistema.motivoSugerencia}</p>
-                  ) : null}
-                </div>
+                </Link>
               </li>
             ))}
           </ul>
@@ -128,7 +145,12 @@ export function SystemsBlock({ sistemas }: { sistemas: Sistema[] }) {
                   <PinIcon />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-text-strong">{sistema.nombre}</p>
+                  <Link
+                    href={`/sistemas/${sistema.slug}?from=panel`}
+                    className="block truncate rounded text-sm font-medium text-text-strong hover:underline focus:outline-none focus:ring-2 focus:ring-primary-100"
+                  >
+                    {sistema.nombre}
+                  </Link>
                   <p className="mt-1 truncate text-xs text-text-muted">
                     Impacta: {sistema.metricas.map((metrica) => metrica.nombre).join(", ") || "—"}
                   </p>

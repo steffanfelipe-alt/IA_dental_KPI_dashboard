@@ -11,6 +11,9 @@
  * (ordenadas por `impactoScore`), A2 = "Métricas críticas" (ordenadas
  * por `vulnerabilidadScore`). "Panel prioritario" names the whole
  * `/panel` screen, not a single block — see SPEC "Resolved 2026-08-12".
+ *
+ * `limiteAnclados` is EXACT copy from the tasks artifact (A3-bis, task
+ * 4.3) — do not reword it, `SystemsBlock.test.tsx` asserts it verbatim.
  */
 export const COPY = {
   panel: {
@@ -18,6 +21,11 @@ export const COPY = {
     bloqueMetricasPrincipales: "Métricas principales",
     bloqueMetricasCriticas: "Métricas críticas",
     bloqueSistemas: "Sistemas",
+    bloqueSistemasAnclados: "Anclados por la clínica",
+    bloqueSistemasCandidatos: "Otros sistemas que podés anclar",
+    accionAnclar: "Anclar",
+    accionDesanclar: "Desanclar",
+    limiteAnclados: "Máximo 4 anclados. Desanclá uno para agregar otro.",
   },
   sistemas: {
     screenTitle: "Sistemas",

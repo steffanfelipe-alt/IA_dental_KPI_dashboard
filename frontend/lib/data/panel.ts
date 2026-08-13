@@ -24,21 +24,18 @@ export interface PanelData {
   /**
    * Endpoint doc names this `sistemasEnCurso`, but Pantalla A's A3 block
    * (SPEC) shows `en_proceso`/`sugerido`/`implementado` PLUS the manually
-   * anchored `disponible` systems (A3-bis) — so this is the full
-   * panel-relevant set, not literally only "in progress" ones. The
-   * display-only ordering/exclusion rules (never show a non-anchored
-   * `disponible` system) belong to the Pantalla A component, not here.
+   * anchored `disponible` systems (A3-bis) — so this is the FULL system
+   * list, unfiltered. The display-only ordering/exclusion rules (never
+   * show a non-anchored `disponible` system in A3, anchor/unanchor
+   * interaction, max-4 gate) belong to `components/systems/SystemsBlock`
+   * (Phase 4/PR2), not this loader — see that component's header.
    */
   sistemasEnCurso: Sistema[];
 }
 
-function esRelevantePanel(sistema: Sistema): boolean {
-  return sistema.estado !== "disponible" || sistema.anclado;
-}
-
 const MOCK_PANEL: PanelData = {
   metricas: MOCK_METRICAS,
-  sistemasEnCurso: MOCK_SISTEMAS.filter(esRelevantePanel),
+  sistemasEnCurso: MOCK_SISTEMAS,
 };
 
 export async function getPanel(clinicaId: string, periodo?: string): Promise<PanelData> {

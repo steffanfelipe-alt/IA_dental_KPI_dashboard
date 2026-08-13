@@ -8,13 +8,15 @@
  * file's header) to build each system's `metricas` field without
  * duplicating series-generation logic.
  *
- * Six systems — one per `MOCK_METRICAS` entry, still covering every
- * `EstadoSistema` (implementado x2, en_proceso, sugerido, disponible x2)
- * and all five `NivelEmbudo` values at least once, plus two manually
- * anchored `disponible` systems (SPEC §5 A3-bis, max 4) so the anchoring
- * UI (PR2) has a non-empty, non-maxed starting fixture. PR4/PR6 extend
- * this list if a screen needs more variety once it's actually being
- * built against.
+ * Seven systems — covering every `EstadoSistema` (implementado x2,
+ * en_proceso, sugerido, disponible x3) and all five `NivelEmbudo` values
+ * at least once: two manually anchored `disponible` systems (SPEC §5
+ * A3-bis, max 4) so the anchoring UI (PR2) has a non-empty, non-maxed
+ * starting fixture, plus one NOT-yet-anchored `disponible` system so
+ * PR2's "Otros sistemas que podés anclar" candidate list (see
+ * `components/systems/SystemsBlock.tsx`) has something real to render
+ * against in a manual `/panel` check. PR4/PR6 extend this list if a
+ * screen needs more variety once it's actually being built against.
  */
 import type { CredencialSistema, DependenciaSistema, MetricaConObjetivoSistema, PasoSistema, Sistema } from "@/lib/types";
 import { MOCK_METRICAS } from "@/lib/mock/panel";
@@ -140,5 +142,21 @@ export const MOCK_SISTEMAS: Sistema[] = [
     dependencias: [],
     credenciales: [],
     metricas: [metricaAsociada("horas-tareas-repetitivas", 8, null)],
+  },
+  {
+    slug: "encuestas-post-turno",
+    nombre: "Encuestas post-turno",
+    descripcionCorta: "Encuesta corta automática después de cada turno para medir satisfacción.",
+    icono: "clipboard-list",
+    nivelEmbudo: "retencion",
+    categoria: "Comunicación",
+    estado: "disponible",
+    progresoPct: 0,
+    sugeridoPorVeredicto: false,
+    anclado: false,
+    pasos: [paso("encuestas-1", "Elegir plataforma de encuestas", "clinica", false)],
+    dependencias: [],
+    credenciales: [],
+    metricas: [metricaAsociada("tasa-no-show", 10, 26)],
   },
 ];

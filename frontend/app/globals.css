@@ -89,3 +89,25 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
 }
+
+/*
+ * panel-sistemas-frontend-mock (PR5) — SPEC "Cross-Cutting Block States
+ * and Accessibility": "support ... `prefers-reduced-motion`". No
+ * component-level override existed anywhere in the shell before this PR
+ * (checked: `Sidebar`'s 180ms width transition, `MetricCard`'s
+ * hover-shadow transition, `MetricTypeFilter`'s color transition all had
+ * no reduced-motion guard) — this global rule closes that gap for the
+ * whole dashboard in one additive place instead of hand-guarding every
+ * `transition-*`/`duration-*` utility class individually. Does not touch
+ * any existing selector or token above.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

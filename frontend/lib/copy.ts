@@ -1,3 +1,5 @@
+import type { NivelEmbudo } from "@/lib/types";
+
 /**
  * lib/copy.ts
  *
@@ -14,6 +16,14 @@
  *
  * `limiteAnclados` is EXACT copy from the tasks artifact (A3-bis, task
  * 4.3) — do not reword it, `SystemsBlock.test.tsx` asserts it verbatim.
+ *
+ * `sistemas.*` (PR5, Pantalla B): panorama/catálogo labels. Spanish
+ * `nivelEmbudo` labels (`NIVEL_EMBUDO_LABEL`) and their funnel display
+ * order (`NIVEL_EMBUDO_ORDEN`) were NOT in SPEC §10 (that section only
+ * names the enum's raw values) — invented here as the natural
+ * marketing-funnel reading order (captación → conversión → retención →
+ * reactivación, con "operación" al final como categoría no-embudo),
+ * a judgment call flagged in apply-progress, not SPEC-confirmed wording.
  */
 export const COPY = {
   panel: {
@@ -29,5 +39,23 @@ export const COPY = {
   },
   sistemas: {
     screenTitle: "Sistemas",
+    panoramaTitulo: "Panorama",
+    panoramaTotal: "Sistemas en el catálogo",
+    bloqueCatalogo: "Catálogo",
+    bloqueMetricasYEstado: "Métricas y estado",
+    /** SPEC scenario "Undefined block placeholder": visible TODO(felpa), not invented content. */
+    bloqueMetricasYEstadoTodo: 'TODO(felpa): diseño de "Métricas y estado" sin confirmar (SPEC §13) — placeholder visible a propósito.',
   },
 } as const;
+
+/** SPEC §10 raw enum values, Spanish display labels — see this file's header for the "not SPEC-confirmed wording" flag. */
+export const NIVEL_EMBUDO_LABEL: Record<NivelEmbudo, string> = {
+  captacion: "Captación",
+  conversion: "Conversión",
+  retencion: "Retención",
+  reactivacion: "Reactivación",
+  operacion: "Operación",
+};
+
+/** Funnel display order for grouping the catálogo by `nivelEmbudo` (SPEC "grouped by `nivelEmbudo` (default)"). */
+export const NIVEL_EMBUDO_ORDEN: NivelEmbudo[] = ["captacion", "conversion", "retencion", "reactivacion", "operacion"];

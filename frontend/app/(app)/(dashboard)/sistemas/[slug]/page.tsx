@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSistema } from "@/lib/data/sistemas";
 import { resolverClinicaIdActual } from "@/lib/session";
+import { resolveSistemaBreadcrumb } from "@/lib/nav";
 import { formatearNumero } from "@/lib/format";
 import { MetricCard } from "@/components/metrics/MetricCard";
 import { StepsPanel } from "@/components/systems/StepsPanel";
@@ -34,13 +35,11 @@ import { ErrorState } from "@/components/ui/ErrorState";
  * `metricas/[slug]/page.tsx`: NEVER from `params`/`searchParams`, even
  * though `slug` itself IS a route param — it identifies the system being
  * viewed, not the tenant.
+ *
+ * Breadcrumb resolution moved to `lib/nav.ts::resolveSistemaBreadcrumb`
+ * in PR5 — see that function's header for why (testability) and that the
+ * mapping itself is unchanged from PR4.
  */
-const BREADCRUMB: Record<string, { label: string; href: string }> = {
-  panel: { label: "Panel prioritario", href: "/panel" },
-  catalogo: { label: "Sistemas", href: "/sistemas" },
-};
-const BREADCRUMB_DEFAULT = BREADCRUMB.catalogo;
-
 export default async function SistemaDetailPage({
   params,
   searchParams,
@@ -52,7 +51,7 @@ export default async function SistemaDetailPage({
   const query = await searchParams;
   const fromParam = query.from;
   const from = typeof fromParam === "string" ? fromParam : undefined;
-  const breadcrumb = (from && BREADCRUMB[from]) || BREADCRUMB_DEFAULT;
+  const breadcrumb = resolveSistemaBreadcrumb(from);
 
   let sistema;
   try {

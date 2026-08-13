@@ -7,8 +7,12 @@ import type { EstadoSistema } from "@/lib/types";
  * as `SystemBadge` (kept as a separate component because A3 rows show
  * both the ring AND the label, and Pantalla B/C need the label alone in
  * places the ring doesn't fit, e.g. a table row).
+ *
+ * `ESTADO_LABEL` is exported (PR5) so Pantalla B's panorama counts
+ * (`sistemas/page.tsx`) reuse the exact same Spanish labels instead of a
+ * second hand-typed copy of "Implementado"/"En proceso"/etc.
  */
-const ESTADO_LABEL: Record<EstadoSistema, string> = {
+export const ESTADO_LABEL: Record<EstadoSistema, string> = {
   implementado: "Implementado",
   en_proceso: "En proceso",
   sugerido: "Sugerido",

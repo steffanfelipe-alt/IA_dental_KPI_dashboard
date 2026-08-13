@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Panel } from "@/components/ui/Panel";
 import type { Diagnostico, DiagnosticoResponse, EstadoEvidencia } from "@/lib/types/api";
 
@@ -66,6 +67,13 @@ export function ProximosPasosView({ diagnostico }: { diagnostico: DiagnosticoRes
           <p className="text-sm text-ink-600">No se detectaron puntos débiles para priorizar.</p>
         </Panel>
       )}
+
+      <Link
+        href="/panel"
+        className="flex w-full items-center justify-center rounded-xl bg-primary-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-primary-700"
+      >
+        Ir al panel
+      </Link>
     </div>
   );
 }

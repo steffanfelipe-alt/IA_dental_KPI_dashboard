@@ -43,16 +43,58 @@ function generarPeriodos(cantidad: number, anioFin: number, mesFin: number): str
 
 const PERIODOS_24M = generarPeriodos(CANTIDAD_MESES, ANIO_FIN, MES_FIN);
 
-/** Deterministic trend + light noise, never `Math.random()` (stable fixtures). */
-function generarSerie(valorInicial: number, valorFinal: number, decimales = 1, amplitudRuido = 0): PuntoSerie[] {
+function siguientePeriodo(periodo: string): string {
+  const [anioStr, mesStr] = periodo.split("-");
+  let anio = Number(anioStr);
+  let mes = Number(mesStr) + 1;
+  if (mes > 12) {
+    mes = 1;
+    anio += 1;
+  }
+  return `${anio}-${String(mes).padStart(2, "0")}`;
+}
+
+/**
+ * Deterministic trend + light noise, never `Math.random()` (stable
+ * fixtures). `mesesProyectados` (Pantalla D, task 5.1/5.4) appends
+ * forward-looking points past the last real period, continuing the same
+ * `valorInicial→valorFinal` slope and marked `proyectado: true` — SPEC
+ * "Real vs projected data separation": `MetricChart` MUST render these
+ * as a distinct dashed segment, never merged with real data. This is a
+ * general "si la tendencia continúa" forecast, independent of any one
+ * system's proposed impact (see `lib/data/metricas.ts`'s
+ * `calcularImpactoEstimadoPct`, a different, action-specific number).
+ */
+function generarSerie(
+  valorInicial: number,
+  valorFinal: number,
+  decimales = 1,
+  amplitudRuido = 0,
+  mesesProyectados = 0,
+): PuntoSerie[] {
   const factor = 10 ** decimales;
-  return PERIODOS_24M.map((periodo, indice) => {
+  const serieReal: PuntoSerie[] = PERIODOS_24M.map((periodo, indice) => {
     const progreso = indice / (PERIODOS_24M.length - 1);
     const base = valorInicial + (valorFinal - valorInicial) * progreso;
     const ruido = amplitudRuido ? Math.sin(indice * 1.3) * amplitudRuido : 0;
     const valor = Math.round((base + ruido) * factor) / factor;
     return { periodo, valor, proyectado: false };
   });
+
+  if (mesesProyectados <= 0) {
+    return serieReal;
+  }
+
+  const pendientePorMes = (valorFinal - valorInicial) / (PERIODOS_24M.length - 1);
+  const puntosProyectados: PuntoSerie[] = [];
+  let periodoActual = serieReal[serieReal.length - 1].periodo;
+  for (let i = 1; i <= mesesProyectados; i++) {
+    periodoActual = siguientePeriodo(periodoActual);
+    const valor = Math.round((valorFinal + pendientePorMes * i) * factor) / factor;
+    puntosProyectados.push({ periodo: periodoActual, valor, proyectado: true });
+  }
+
+  return [...serieReal, ...puntosProyectados];
 }
 
 interface MetricaFixture {
@@ -68,15 +110,29 @@ interface MetricaFixture {
   valorFinal: number;
   decimales?: number;
   amplitudRuido?: number;
+  /** Forward-looking `proyectado: true` points appended past the last real period (Pantalla D). */
+  mesesProyectados?: number;
   impactoScore: number;
   vulnerabilidadScore: number;
   sistemasAsociados: SistemaRef[];
 }
 
 function metrica(fixture: MetricaFixture): Metrica {
-  const serie = generarSerie(fixture.valorInicial, fixture.valorFinal, fixture.decimales ?? 1, fixture.amplitudRuido ?? 0);
-  const valorActual = serie[serie.length - 1].valor;
-  const valorAnterior = serie[serie.length - 2].valor;
+  const serie = generarSerie(
+    fixture.valorInicial,
+    fixture.valorFinal,
+    fixture.decimales ?? 1,
+    fixture.amplitudRuido ?? 0,
+    fixture.mesesProyectados ?? 0,
+  );
+  // `valorActual`/`valorAnterior` MUST always reflect the last two REAL
+  // periods, never a projected one, even when `mesesProyectados` extends
+  // `serie` past them — Pantalla A's `MetricCard`/`TrendValue` and
+  // `semantics.ts::evaluarMetrica` all assume "current value", not "our
+  // own forecast", and PR2 already shipped/tested against that.
+  const puntosReales = serie.filter((punto) => !punto.proyectado);
+  const valorActual = puntosReales[puntosReales.length - 1].valor;
+  const valorAnterior = puntosReales[puntosReales.length - 2].valor;
   return {
     slug: fixture.slug,
     nombre: fixture.nombre,
@@ -108,6 +164,7 @@ export const MOCK_METRICAS: Metrica[] = [
     valorInicial: 26,
     valorFinal: 18.9,
     amplitudRuido: 0.6,
+    mesesProyectados: 3,
     impactoScore: 92,
     vulnerabilidadScore: 88,
     sistemasAsociados: [{ slug: "recordatorios-turnos", nombre: "Recordatorios automáticos de turnos", estado: "implementado" }],

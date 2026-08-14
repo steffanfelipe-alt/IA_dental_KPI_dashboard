@@ -1,4 +1,5 @@
 import type { Direccion, Metrica } from "@/lib/types";
+import type { MetricaCalculada } from "@/lib/types/metricas";
 
 export type EstadoMetrica = "good" | "bad" | "flat";
 
@@ -48,6 +49,46 @@ export function evaluarMetrica(metrica: MetricaParaEvaluar): EvaluacionMetrica {
 
   const mejorando = direccion === "mayor_mejor" ? delta > 0 : delta < 0;
   return { estado: mejorando ? "good" : "bad", avanceHaciaObjetivo };
+}
+
+/**
+ * lib/semantics.ts::evaluarMetricaCalculada
+ *
+ * Veredicto adapter (design U2 "thin adapter deriving valorActual/
+ * valorAnterior from the last 2 `serie` entries"). `MetricaCalculada`
+ * (lib/types/metricas.ts) has no `valorActual`/`valorAnterior` of its
+ * own — only a period `serie` — so this derives the pair `evaluarMetrica`
+ * needs from the last two chronological points. `objetivo` is always
+ * `null` here: Veredicto/Slice 1 has no real objective wired yet (see
+ * `lib/mock/veredicto.ts`).
+ *
+ * Returns `null` (never a guessed state) when there's nothing safe to
+ * evaluate: no declared `direccion` (spec "Declared Metric Direction" —
+ * the 6 undeclared KPIs stay neutral, never inferred), no `serie`, or
+ * fewer than 2 points to compare. Callers (e.g. `Sparkline`) render the
+ * neutral/blue color on `null`.
+ */
+export function evaluarMetricaCalculada(
+  metrica: Pick<MetricaCalculada, "serie" | "direccion">,
+): EstadoMetrica | null {
+  if (metrica.direccion === null || !metrica.serie) {
+    return null;
+  }
+
+  const valores = Object.values(metrica.serie);
+  if (valores.length < 2) {
+    return null;
+  }
+
+  const valorAnterior = valores[valores.length - 2];
+  const valorActual = valores[valores.length - 1];
+
+  return evaluarMetrica({
+    valorActual,
+    valorAnterior,
+    direccion: metrica.direccion,
+    objetivo: null,
+  }).estado;
 }
 
 function calcularAvanceHaciaObjetivo(valorActual: number, objetivo: number, direccion: Direccion): number {

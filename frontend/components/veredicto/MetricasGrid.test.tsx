@@ -24,6 +24,7 @@ function metrica(kpiId: number): MetricaCalculada {
     fuentes: ["planilla.xlsx"],
     serie: null,
     agregados: null,
+    direccion: null,
   };
 }
 

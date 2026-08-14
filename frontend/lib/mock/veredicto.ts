@@ -16,6 +16,7 @@
  */
 import type { Diagnostico, DiagnosticoResponse, InformeResponse } from "../types/api";
 import type { MetricaCalculada } from "../types/metricas";
+import type { Direccion } from "../types";
 
 const PERIODOS = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"];
 
@@ -30,6 +31,36 @@ function serieDe(valores: number[]): Record<string, number> {
   });
   return serie;
 }
+
+/**
+ * Transcribed 1:1 from `BENCHMARKS_AR[kpi_id].mejor_es`
+ * (`parser/diagnostico/benchmarks.py`) — spec "Declared Metric Direction".
+ * `null` for the 6 KPIs (11, 14, 16, 17, 18, 20) with no declared
+ * direction there. NEVER inferred from the series trend.
+ */
+const DIRECCION_POR_KPI: Record<number, Direccion | null> = {
+  1: "mayor_mejor",
+  2: "menor_mejor",
+  3: "mayor_mejor",
+  4: "menor_mejor",
+  5: "mayor_mejor",
+  6: "mayor_mejor",
+  7: "mayor_mejor",
+  8: "mayor_mejor",
+  9: "mayor_mejor",
+  10: "mayor_mejor",
+  11: null,
+  12: "mayor_mejor",
+  13: "mayor_mejor",
+  14: null,
+  15: "menor_mejor",
+  16: null,
+  17: null,
+  18: null,
+  19: "menor_mejor",
+  20: null,
+  21: "mayor_mejor",
+};
 
 function agregadosDe(valores: number[]): { promedio: number; mediana: number; ultimo: number } {
   const ordenados = [...valores].sort((a, b) => a - b);
@@ -60,6 +91,7 @@ function metricaConSerie(
     fuentes,
     serie: serieDe(valores),
     agregados: agregadosDe(valores),
+    direccion: DIRECCION_POR_KPI[kpi_id] ?? null,
   };
 }
 
@@ -71,7 +103,17 @@ function metricaSinSerie(
   confianza: number,
   fuentes: string[],
 ): MetricaCalculada {
-  return { kpi_id, nombre, valor, unidad, confianza, fuentes, serie: null, agregados: null };
+  return {
+    kpi_id,
+    nombre,
+    valor,
+    unidad,
+    confianza,
+    fuentes,
+    serie: null,
+    agregados: null,
+    direccion: DIRECCION_POR_KPI[kpi_id] ?? null,
+  };
 }
 
 /**

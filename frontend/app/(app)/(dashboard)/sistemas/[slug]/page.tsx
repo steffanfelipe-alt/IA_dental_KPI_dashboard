@@ -5,6 +5,7 @@ import { resolverClinicaIdActual } from "@/lib/session";
 import { resolveSistemaBreadcrumb } from "@/lib/nav";
 import { formatearNumero } from "@/lib/format";
 import { MetricCard } from "@/components/metrics/MetricCard";
+import { AnchorButton } from "@/components/systems/AnchorButton";
 import { StepsPanel } from "@/components/systems/StepsPanel";
 import { SystemStatusChip } from "@/components/systems/SystemStatusChip";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -39,6 +40,13 @@ import { ErrorState } from "@/components/ui/ErrorState";
  * Breadcrumb resolution moved to `lib/nav.ts::resolveSistemaBreadcrumb`
  * in PR5 — see that function's header for why (testability) and that the
  * mapping itself is unchanged from PR4.
+ *
+ * Task 5.4: `AnchorButton` sits next to `SystemStatusChip` here — the
+ * THIRD anchor entry point (with `/panel`'s `SystemsBlock` and
+ * `/sistemas`'s catalog tiles), all three sharing `AnclajeContext`. No
+ * `AnclajeSeed` call here: a single system's slug is never a correct
+ * first-run seed for the whole store, so seeding stays on the two pages
+ * that see the full list.
  */
 export default async function SistemaDetailPage({
   params,
@@ -81,6 +89,7 @@ export default async function SistemaDetailPage({
           <h1 className="text-2xl font-semibold text-text-strong">{sistema.nombre}</h1>
           <SystemStatusChip estado={sistema.estado} />
           <span className="text-xs tabular-nums text-text-muted">{formatearNumero(sistema.progresoPct)}% completado</span>
+          <AnchorButton sistema={sistema} />
         </div>
         <p className="max-w-2xl text-sm text-text-muted">{sistema.descripcionCorta}</p>
       </div>

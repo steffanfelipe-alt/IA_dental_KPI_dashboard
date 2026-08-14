@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import type { EstadoSistema, Sistema } from "@/lib/types";
 import { COPY } from "@/lib/copy";
@@ -8,12 +7,11 @@ import { SectionHeading } from "@/components/ui/SectionHeading";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SystemBadge } from "./SystemBadge";
 import { SystemStatusChip } from "./SystemStatusChip";
+import { MAX_ANCLADOS, useAnclaje } from "@/lib/anclaje/AnclajeContext";
+import { AnclajeSeed } from "@/lib/anclaje/AnclajeSeed";
 
 /** SPEC "Pantalla A": A3 shows only these three, in this order — never `disponible`. */
 const ORDEN_A3: EstadoSistema[] = ["en_proceso", "sugerido", "implementado"];
-
-/** SPEC "Manual System Anchoring (A3-bis)": hard cap, exact copy below. */
-const MAX_ANCLADOS = 4;
 
 function PinIcon() {
   return (
@@ -28,10 +26,11 @@ function PinIcon() {
  * components/systems/SystemsBlock.tsx
  *
  * A3 + A3-bis (SPEC "Pantalla A — Panel prioritario", "Manual System
- * Anchoring"). Client component: anchoring is in-memory, optimistic
- * state per the design's data flow ("client leaves ... in-memory
- * optimistic state, onToggle callbacks — Slice2 wires PUT"), no
- * localStorage, no backend call yet.
+ * Anchoring"). Client component: anchoring now reads/writes the shared
+ * `AnclajeContext` (task 5.3 — was a local, page-scoped `useState<Set>`,
+ * not shared or persisted across reload). `localStorage`-backed, but
+ * still Slice-1 client-only state, not per-clinic backend persistence
+ * (Slice-2 TODO wires a real PUT) — see `lib/anclaje/AnclajeContext.tsx`.
  *
  * Takes the FULL `sistemas` list (not pre-filtered) and does its own
  * partitioning — this fixes a small inconsistency inherited from PR1:
@@ -73,34 +72,16 @@ function PinIcon() {
  * target" discipline `MetricCard` uses).
  */
 export function SystemsBlock({ sistemas }: { sistemas: Sistema[] }) {
-  const [anclados, setAnclados] = useState<Set<string>>(
-    () => new Set(sistemas.filter((sistema) => sistema.estado === "disponible" && sistema.anclado).map((sistema) => sistema.slug)),
-  );
+  const { isAnclado, anclar, desanclar, limiteAlcanzado } = useAnclaje();
+  const seedSlugs = sistemas.filter((sistema) => sistema.estado === "disponible" && sistema.anclado).map((sistema) => sistema.slug);
 
   const grupoPrincipal = ORDEN_A3.flatMap((estado) => sistemas.filter((sistema) => sistema.estado === estado));
-  const grupoAnclado = sistemas.filter((sistema) => sistema.estado === "disponible" && anclados.has(sistema.slug));
-  const candidatos = sistemas.filter((sistema) => sistema.estado === "disponible" && !anclados.has(sistema.slug));
-  const limiteAlcanzado = grupoAnclado.length >= MAX_ANCLADOS;
-
-  function anclar(slug: string) {
-    setAnclados((prev) => {
-      if (prev.size >= MAX_ANCLADOS) return prev;
-      const next = new Set(prev);
-      next.add(slug);
-      return next;
-    });
-  }
-
-  function desanclar(slug: string) {
-    setAnclados((prev) => {
-      const next = new Set(prev);
-      next.delete(slug);
-      return next;
-    });
-  }
+  const grupoAnclado = sistemas.filter((sistema) => sistema.estado === "disponible" && isAnclado(sistema.slug));
+  const candidatos = sistemas.filter((sistema) => sistema.estado === "disponible" && !isAnclado(sistema.slug));
 
   return (
     <section className="flex flex-col gap-6">
+      <AnclajeSeed slugs={seedSlugs} />
       <div>
         <SectionHeading title={COPY.panel.bloqueSistemas} subtitle="en proceso → sugeridos → implementados" />
         {grupoPrincipal.length === 0 ? (

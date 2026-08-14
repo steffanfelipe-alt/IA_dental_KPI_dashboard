@@ -29,8 +29,8 @@ from dataclasses import replace
 from typing import Optional
 
 from parser.catalogo.catalogo_tecnologico import INTERVENCIONES
-from parser.vocabulario.claude_utils import extraer_texto
 from parser.catalogo.cruces import Cruce, calcular_cruce, _nombre_humano
+from parser.vocabulario.puerto_llm import PuertoLLM
 from parser.vocabulario.schema import ETAPAS_EMBUDO, METRICAS, OPERACIONES_LEGALES, VARIABLE_TYPES
 
 try:
@@ -195,22 +195,29 @@ def _construir_cruce_propuesto(
     )
 
 
-def proponer_cruces(variables: dict, client=None) -> list[Cruce]:
+def proponer_cruces(variables: dict, puerto: Optional[PuertoLLM] = None) -> list[Cruce]:
     """Pide al modelo una lista de cruces candidatos y devuelve sólo los
     que pasan la validación determinista — nunca lo que el modelo haya
     calculado (no calcula nada) ni lo que haya declarado sin verificar.
 
-    `client=None` (default, sin API configurada) devuelve lista vacía —
+    `puerto=None` (default, sin puerto configurado) devuelve lista vacía —
     mismo comportamiento de "esta capa simplemente no corrió" que
-    `interpretacion.py` usa para sus tres entry points."""
-    if client is None:
+    `interpretacion.py` usa para sus tres entry points.
+
+    `puerto` (deuda-panel-sistemas-puertollm, U1): antes `client` crudo de
+    Anthropic. Esta función no necesita la señal de truncamiento (una
+    propuesta cortada a la mitad no parsea como JSON válido y ya se
+    descarta más abajo con el mismo trato que un JSON malformado), así que
+    habla contra `PuertoLLM.preguntar` — no hace falta el método con
+    truncamiento que sí usan `interpretar_kpi`/`interpretar_panel`."""
+    if puerto is None:
         return []
 
     payload_variables = _payload_variables(variables)
     if len(payload_variables) < 2:
         return []  # no hay con qué cruzar
 
-    respuesta = client.messages.create(
+    texto = puerto.preguntar(
         model=MODEL,
         max_tokens=2000,
         thinking={"type": "disabled"},
@@ -222,8 +229,7 @@ def proponer_cruces(variables: dict, client=None) -> list[Cruce]:
                 "objetivos_de_negocio_del_catalogo": _objetivos_catalogo(),
             }, ensure_ascii=False, default=str),
         }],
-    )
-    texto = extraer_texto(respuesta).strip()
+    ).strip()
     if texto.startswith("```"):
         texto = texto.split("```")[1].removeprefix("json").strip()
 

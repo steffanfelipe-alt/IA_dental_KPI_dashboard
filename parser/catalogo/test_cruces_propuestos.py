@@ -1,10 +1,16 @@
 """
 test_cruces_propuestos.py
 
-Sin pytest, sin red (el "cliente" es un stub que devuelve texto fijo, no
-llama a ningún servicio): corre con `python -m parser.catalogo.test_cruces_propuestos`.
+Sin pytest, sin red (el fake implementa el Protocol `PuertoLLM`, no llama a
+ningún servicio): corre con `python -m parser.catalogo.test_cruces_propuestos`.
 Fase C del plan de evolución — capa 3 de cruces.py, propuestas del modelo
 validadas por los mismos guardarraíles deterministas de la capa 1/2.
+
+deuda-panel-sistemas-puertollm (U1): `proponer_cruces` pasó de un `client`
+crudo de Anthropic (`_ClienteFalso` mimetizando `client.messages.create`) a
+`puerto: Optional[PuertoLLM]`. El fake de acá pasa a implementar el
+Protocol directamente (`.preguntar(...)`), mismo patrón que
+`_PuertoLLMFalso` en `parser/extraccion/test_*.py`.
 """
 
 import json
@@ -21,27 +27,18 @@ SERIE = {"2026-01": 100.0, "2026-02": 110.0, "2026-03": 120.0}
 SERIE_B = {"2026-01": 10.0, "2026-02": 11.0, "2026-03": 12.0}
 
 
-class _Bloque:
-    def __init__(self, texto):
-        self.type, self.text = "text", texto
-
-
-class _ClienteFalso:
-    """Stub de anthropic.Anthropic — no llama a ninguna API, sólo devuelve
-    el texto que se le configuró y registra si fue invocado (para poder
-    verificar que ciertos casos NUNCA llaman al cliente)."""
+class _PuertoLLMFalso:
+    """Fake del Protocol `PuertoLLM` — no llama a ninguna API, sólo
+    devuelve el texto que se le configuró y registra cuántas veces se
+    invocó `.preguntar(...)` (para poder verificar que ciertos casos
+    NUNCA llaman al puerto)."""
     def __init__(self, texto_respuesta: str):
         self.texto_respuesta = texto_respuesta
         self.llamadas = 0
 
-        class _Messages:
-            def create(_self, **kwargs):
-                self.llamadas += 1
-                return type("Respuesta", (), {
-                    "content": [_Bloque(self.texto_respuesta)],
-                    "stop_reason": "end_turn",
-                })()
-        self.messages = _Messages()
+    def preguntar(self, **kwargs) -> str:
+        self.llamadas += 1
+        return self.texto_respuesta
 
 
 def _propuesta_json(propuestas: list[dict]) -> str:
@@ -62,8 +59,8 @@ def test_propuesta_valida_se_acepta():
         "etapa_embudo": "turnos asistidos",
         "como_ayuda_decision": "ingreso promedio por paciente asistido",
     }]
-    cliente = _ClienteFalso(_propuesta_json(propuestas))
-    cruces = proponer_cruces(_variables_monto_y_conteo(), client=cliente)
+    puerto = _PuertoLLMFalso(_propuesta_json(propuestas))
+    cruces = proponer_cruces(_variables_monto_y_conteo(), puerto=puerto)
 
     assert len(cruces) == 1
     c = cruces[0]
@@ -85,8 +82,8 @@ def test_unidad_declarada_que_no_coincide_con_el_algebra_se_descarta():
         "unidad_esperada": "%",  # incorrecto a propósito
         "por_que_le_importa_al_negocio": "...",
     }]
-    cliente = _ClienteFalso(_propuesta_json(propuestas))
-    cruces = proponer_cruces(_variables_monto_y_conteo(), client=cliente)
+    puerto = _PuertoLLMFalso(_propuesta_json(propuestas))
+    cruces = proponer_cruces(_variables_monto_y_conteo(), puerto=puerto)
     assert cruces == []
 
 
@@ -95,8 +92,8 @@ def test_variable_inexistente_se_descarta():
         "variable_a": "monto_cobrado", "operacion": "/", "variable_b": "variable_que_no_existe",
         "unidad_esperada": "monto_ars/unidad", "por_que_le_importa_al_negocio": "...",
     }]
-    cliente = _ClienteFalso(_propuesta_json(propuestas))
-    cruces = proponer_cruces(_variables_monto_y_conteo(), client=cliente)
+    puerto = _PuertoLLMFalso(_propuesta_json(propuestas))
+    cruces = proponer_cruces(_variables_monto_y_conteo(), puerto=puerto)
     assert cruces == []
 
 
@@ -109,8 +106,8 @@ def test_variable_en_cuarentena_se_descarta():
         "variable_a": "monto_cobrado", "operacion": "/", "variable_b": "no_shows",  # no_shows no está en el dict
         "unidad_esperada": "monto_ars/unidad", "por_que_le_importa_al_negocio": "...",
     }]
-    cliente = _ClienteFalso(_propuesta_json(propuestas))
-    cruces = proponer_cruces(_variables_monto_y_conteo(), client=cliente)  # no_shows ausente a propósito
+    puerto = _PuertoLLMFalso(_propuesta_json(propuestas))
+    cruces = proponer_cruces(_variables_monto_y_conteo(), puerto=puerto)  # no_shows ausente a propósito
     assert cruces == []
 
 
@@ -126,8 +123,8 @@ def test_conteo_dividido_conteo_fuera_del_embudo_se_descarta():
         "variable_a": "no_shows", "operacion": "/", "variable_b": "resenas_nuevas",
         "unidad_esperada": "%", "por_que_le_importa_al_negocio": "...",
     }]
-    cliente = _ClienteFalso(_propuesta_json(propuestas))
-    cruces = proponer_cruces(variables, client=cliente)
+    puerto = _PuertoLLMFalso(_propuesta_json(propuestas))
+    cruces = proponer_cruces(variables, puerto=puerto)
     assert cruces == []
 
 
@@ -142,15 +139,15 @@ def test_conteo_dividido_conteo_dentro_del_embudo_se_acepta():
         "variable_a": "turnos_asistidos", "operacion": "/", "variable_b": "consultas_nuevas_mes",
         "unidad_esperada": "%", "por_que_le_importa_al_negocio": "conversion del embudo",
     }]
-    cliente = _ClienteFalso(_propuesta_json(propuestas))
-    cruces = proponer_cruces(variables, client=cliente)
+    puerto = _PuertoLLMFalso(_propuesta_json(propuestas))
+    cruces = proponer_cruces(variables, puerto=puerto)
     assert len(cruces) == 1
     assert cruces[0].unidad == "%"
 
 
 def test_json_malformado_no_rompe_el_pipeline():
-    cliente = _ClienteFalso("esto no es JSON en absoluto {{{")
-    cruces = proponer_cruces(_variables_monto_y_conteo(), client=cliente)
+    puerto = _PuertoLLMFalso("esto no es JSON en absoluto {{{")
+    cruces = proponer_cruces(_variables_monto_y_conteo(), puerto=puerto)
     assert cruces == []
 
 
@@ -160,8 +157,8 @@ def test_json_envuelto_en_fence_markdown_se_parsea_igual():
         "unidad_esperada": "monto_ars/unidad", "por_que_le_importa_al_negocio": "...",
     }]
     texto_con_fence = "```json\n" + _propuesta_json(propuestas) + "\n```"
-    cliente = _ClienteFalso(texto_con_fence)
-    cruces = proponer_cruces(_variables_monto_y_conteo(), client=cliente)
+    puerto = _PuertoLLMFalso(texto_con_fence)
+    cruces = proponer_cruces(_variables_monto_y_conteo(), puerto=puerto)
     assert len(cruces) == 1
 
 
@@ -170,8 +167,8 @@ def test_operacion_invalida_se_descarta():
         "variable_a": "monto_cobrado", "operacion": "*", "variable_b": "turnos_asistidos",
         "unidad_esperada": "monto_ars/unidad", "por_que_le_importa_al_negocio": "...",
     }]
-    cliente = _ClienteFalso(_propuesta_json(propuestas))
-    cruces = proponer_cruces(_variables_monto_y_conteo(), client=cliente)
+    puerto = _PuertoLLMFalso(_propuesta_json(propuestas))
+    cruces = proponer_cruces(_variables_monto_y_conteo(), puerto=puerto)
     assert cruces == []
 
 
@@ -184,13 +181,13 @@ def test_confianza_tiene_techo_aunque_los_insumos_confien_mucho():
         "variable_a": "monto_cobrado", "operacion": "/", "variable_b": "turnos_asistidos",
         "unidad_esperada": "monto_ars/unidad", "por_que_le_importa_al_negocio": "...",
     }]
-    cliente = _ClienteFalso(_propuesta_json(propuestas))
-    cruces = proponer_cruces(variables, client=cliente)
+    puerto = _PuertoLLMFalso(_propuesta_json(propuestas))
+    cruces = proponer_cruces(variables, puerto=puerto)
     assert cruces[0].confianza == CONFIANZA_PROPUESTA, "nunca por encima del techo, aunque los insumos confíen 0.95"
 
 
-def test_client_none_no_llama_a_nada_y_devuelve_vacio():
-    cruces = proponer_cruces(_variables_monto_y_conteo(), client=None)
+def test_puerto_none_no_llama_a_nada_y_devuelve_vacio():
+    cruces = proponer_cruces(_variables_monto_y_conteo(), puerto=None)
     assert cruces == []
 
 
@@ -198,10 +195,10 @@ def test_menos_de_dos_variables_con_serie_no_llama_al_cliente():
     """Con una sola variable útil no hay con qué cruzar — no tiene sentido
     gastar una llamada a la API para que el modelo no proponga nada."""
     variables = {"monto_cobrado": _vv(120.0, serie=SERIE)}
-    cliente = _ClienteFalso(_propuesta_json([]))
-    cruces = proponer_cruces(variables, client=cliente)
+    puerto = _PuertoLLMFalso(_propuesta_json([]))
+    cruces = proponer_cruces(variables, puerto=puerto)
     assert cruces == []
-    assert cliente.llamadas == 0, "no debía llamar a la API con menos de 2 variables útiles"
+    assert puerto.llamadas == 0, "no debía llamar a la API con menos de 2 variables útiles"
 
 
 def test_respeta_el_maximo_de_propuestas():
@@ -212,8 +209,8 @@ def test_respeta_el_maximo_de_propuestas():
         "variable_a": "monto_cobrado", "operacion": "/", "variable_b": "turnos_asistidos",
         "unidad_esperada": "monto_ars/unidad", "por_que_le_importa_al_negocio": "...",
     }
-    cliente = _ClienteFalso(_propuesta_json([propuesta_valida] * (MAX_PROPUESTAS + 5)))
-    cruces = proponer_cruces(_variables_monto_y_conteo(), client=cliente)
+    puerto = _PuertoLLMFalso(_propuesta_json([propuesta_valida] * (MAX_PROPUESTAS + 5)))
+    cruces = proponer_cruces(_variables_monto_y_conteo(), puerto=puerto)
     assert len(cruces) == MAX_PROPUESTAS
 
 
@@ -229,8 +226,8 @@ def test_propuesta_sin_suficientes_periodos_comunes_se_descarta():
         "variable_a": "monto_cobrado", "operacion": "/", "variable_b": "turnos_asistidos",
         "unidad_esperada": "monto_ars/unidad", "por_que_le_importa_al_negocio": "...",
     }]
-    cliente = _ClienteFalso(_propuesta_json(propuestas))
-    cruces = proponer_cruces(variables, client=cliente)
+    puerto = _PuertoLLMFalso(_propuesta_json(propuestas))
+    cruces = proponer_cruces(variables, puerto=puerto)
     assert cruces == []
 
 
@@ -249,8 +246,8 @@ def test_etapa_y_decision_faltantes_no_descartan_la_propuesta():
         "unidad_esperada": "monto_ars/unidad",
         # sin "etapa_embudo" ni "como_ayuda_decision" a propósito
     }]
-    cliente = _ClienteFalso(_propuesta_json(propuestas))
-    cruces = proponer_cruces(_variables_monto_y_conteo(), client=cliente)
+    puerto = _PuertoLLMFalso(_propuesta_json(propuestas))
+    cruces = proponer_cruces(_variables_monto_y_conteo(), puerto=puerto)
     assert len(cruces) == 1
     c = cruces[0]
     assert c.etapa_embudo == "(el modelo no especificó una etapa)"
@@ -276,8 +273,8 @@ def test_null_en_los_campos_de_prosa_no_tira_abajo_el_lote():
             "etapa_embudo": "turnos asistidos", "como_ayuda_decision": "ticket promedio real",
         },
     ]
-    cliente = _ClienteFalso(_propuesta_json(propuestas))
-    cruces = proponer_cruces(_variables_monto_y_conteo(), client=cliente)
+    puerto = _PuertoLLMFalso(_propuesta_json(propuestas))
+    cruces = proponer_cruces(_variables_monto_y_conteo(), puerto=puerto)
     assert len(cruces) == 2, "la propuesta mal tipada cae al placeholder, no rompe el lote"
     assert cruces[0].etapa_embudo == "(el modelo no especificó una etapa)"
     assert cruces[0].impacto_decision == "(el modelo no explicó el impacto en la decisión)"

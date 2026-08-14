@@ -16,7 +16,9 @@ from parser.diagnostico.calidad import evaluar_calidad
 from parser.vocabulario.claude_utils import extraer_texto, respuesta_truncada
 from parser.catalogo.catalogo_tecnologico import mapear_oportunidades
 from parser.diagnostico.diagnostico import diagnosticar
-from parser.interpretacion.interpretacion import interpretar_clinica, interpretar_kpi, interpretar_panel, semanas_desde_serie
+from parser.interpretacion.interpretacion import (
+    SYSTEM_PROMPT_BASE, interpretar_clinica, interpretar_kpi, interpretar_panel, semanas_desde_serie,
+)
 from parser.diagnostico.priorizacion import priorizar_oportunidades
 
 
@@ -279,9 +281,72 @@ def test_respuesta_completa_no_se_marca_truncada():
 
 
 def test_los_tres_entry_points_declaran_truncado_sin_cliente():
-    assert interpretar_kpi(3, 50.0, {}, client=None)["truncado"] is False
-    assert interpretar_panel({}, {}, client=None)["truncado"] is False
+    assert interpretar_kpi(3, 50.0, {}, puerto=None)["truncado"] is False
+    assert interpretar_panel({}, {}, puerto=None)["truncado"] is False
     assert interpretar_clinica([], [], client=None)["truncado"] is False
+
+
+# ---------------------------------------------------------------------------
+# deuda-panel-sistemas-puertollm (U1): interpretar_kpi/interpretar_panel
+# pasaron de un `client` crudo de Anthropic a `puerto: Optional[PuertoLLM]`,
+# hablando contra `preguntar_con_truncamiento` en vez de
+# `client.messages.create(...)` + `respuesta_truncada(respuesta)` a mano.
+# Antes de este cambio, la rama `client is not None` de ambas funciones no
+# tenía NINGUNA cobertura — este bloque cierra ese gap, incluyendo el caso
+# de truncamiento (el que antes motivó declarar `thinking` explícito).
+# `interpretar_clinica` sigue con `client`/streaming crudo a propósito, no
+# se toca acá.
+# ---------------------------------------------------------------------------
+
+class _PuertoLLMFalso:
+    """Fake del Protocol `PuertoLLM`: `preguntar_con_truncamiento` devuelve
+    directamente el par (texto, truncado) configurado, sin pasar por
+    `anthropic.Anthropic` ni por `client.messages.create`. Mismo patrón que
+    `_PuertoLLMFalso` en `parser/extraccion/test_*.py`, extendido con el
+    segundo método que agregó U1."""
+
+    def __init__(self, texto: str, truncado: bool = False):
+        self._texto = texto
+        self._truncado = truncado
+        self.ultima_llamada = None
+        self.llamadas = 0
+
+    def preguntar_con_truncamiento(self, **kwargs):
+        self.ultima_llamada = kwargs
+        self.llamadas += 1
+        return self._texto, self._truncado
+
+
+def test_interpretar_kpi_con_puerto_devuelve_interpretacion_del_puerto():
+    puerto = _PuertoLLMFalso("gap moderado, seguir observando")
+    resultado = interpretar_kpi(4, 25.0, respuestas_diagnostico={}, puerto=puerto)
+    assert resultado["interpretacion"] == "gap moderado, seguir observando"
+    assert resultado["truncado"] is False
+    assert puerto.llamadas == 1
+    assert puerto.ultima_llamada["system"] == SYSTEM_PROMPT_BASE
+
+
+def test_interpretar_kpi_con_puerto_truncado_propaga_truncado_true():
+    puerto = _PuertoLLMFalso("## interpretación cortada a la mit", truncado=True)
+    resultado = interpretar_kpi(4, 25.0, respuestas_diagnostico={}, puerto=puerto)
+    assert resultado["truncado"] is True
+    assert resultado["interpretacion"] == "## interpretación cortada a la mit"
+
+
+def test_interpretar_panel_con_puerto_devuelve_interpretacion_del_puerto():
+    puerto = _PuertoLLMFalso("panel completo: mix de tratamientos explica la brecha")
+    kpis_calculados = {4: {"valor": 21.9, "unidad": "%", "confianza": 0.9}}
+    resultado = interpretar_panel(kpis_calculados, respuestas_diagnostico={}, puerto=puerto)
+    assert resultado["interpretacion"] == "panel completo: mix de tratamientos explica la brecha"
+    assert resultado["truncado"] is False
+    assert puerto.llamadas == 1
+
+
+def test_interpretar_panel_con_puerto_truncado_propaga_truncado_true():
+    puerto = _PuertoLLMFalso("panel cortado a la mit", truncado=True)
+    resultado = interpretar_panel({}, respuestas_diagnostico={}, puerto=puerto)
+    assert resultado["truncado"] is True
+    assert resultado["interpretacion"] == "panel cortado a la mit"
 
 
 if __name__ == "__main__":

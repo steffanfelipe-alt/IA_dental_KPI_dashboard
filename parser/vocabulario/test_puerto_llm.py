@@ -105,6 +105,37 @@ def test_preguntar_usa_extraer_texto_y_saltea_bloques_de_thinking():
     assert texto == "resultado final"
 
 
+# ---------------------------------------------------------------------------
+# deuda-panel-sistemas-puertollm (U1): preguntar_con_truncamiento — mismo
+# preguntar() de arriba, pero además devuelve si la respuesta se cortó por
+# max_tokens. `preguntar()` en sí queda intacta (ver tests de arriba).
+# ---------------------------------------------------------------------------
+
+def test_preguntar_con_truncamiento_devuelve_texto_y_false_en_respuesta_completa():
+    cliente = _ClienteFalso("informe completo")
+    adaptador = AdaptadorAnthropic(cliente)
+    texto, truncado = adaptador.preguntar_con_truncamiento(
+        model="m", system="s", max_tokens=10, messages=[],
+    )
+    assert texto == "informe completo"
+    assert truncado is False
+
+
+def test_preguntar_con_truncamiento_marca_true_cuando_stop_reason_es_max_tokens():
+    class _ClienteTruncado:
+        def __init__(self):
+            self.messages = SimpleNamespace(
+                create=lambda **kwargs: _RespuestaFalsa("texto cortado a la mit", stop_reason="max_tokens"),
+            )
+
+    adaptador = AdaptadorAnthropic(_ClienteTruncado())
+    texto, truncado = adaptador.preguntar_con_truncamiento(
+        model="m", system="s", max_tokens=10, messages=[],
+    )
+    assert texto == "texto cortado a la mit"
+    assert truncado is True
+
+
 def test_adaptador_acepta_un_cliente_inyectado_sin_necesitar_el_sdk_real():
     # Nunca debe intentar `anthropic.Anthropic()` cuando se le pasa un
     # cliente — así los tests (y evals/runner.py, probar_manual.py) pueden

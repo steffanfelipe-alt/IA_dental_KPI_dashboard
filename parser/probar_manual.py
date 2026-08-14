@@ -98,11 +98,14 @@ if not api_key or anthropic is None:
     st.stop()
 
 client = anthropic.Anthropic(api_key=api_key)
-# Camino de extracción (Strategy + Adapter, scope de este refactor): sólo
-# pipeline.procesar_migracion (y lo que reenvía a extraer_archivo /
-# segunda_lectura) habla contra PuertoLLM. Las secciones 8/9 de más abajo
-# (interpretacion.py, cruces_propuestos.py) siguen recibiendo el `client`
-# crudo — streaming y fuera de scope de este cambio.
+# Camino de extracción (Strategy + Adapter): pipeline.procesar_migracion (y
+# lo que reenvía a extraer_archivo / segunda_lectura) habla contra
+# PuertoLLM. deuda-panel-sistemas-puertollm (U1) sumó a esa misma lista la
+# sección 8 (interpretar_kpi/interpretar_panel) y la 9b (proponer_cruces) —
+# un único `AdaptadorAnthropic` envuelve el cliente crudo una sola vez acá
+# y se reutiliza para las cuatro llamadas. `interpretar_clinica` (sección
+# 8a) sigue recibiendo el `client` crudo: streaming, fuera de esta puerta
+# a propósito (ver docstring de interpretacion.py).
 puerto_llm = AdaptadorAnthropic(client)
 
 # Fase 5 (geometría vía AWS Textract): apagado por default. El gate real
@@ -660,7 +663,7 @@ if resultado:
                         # los patrones cruzados y contradicciones que diagnostico.py
                         # ya calculó (ver regla 8 de SYSTEM_PROMPT_BASE).
                         diagnostico=diagnosticos,
-                        client=client,
+                        puerto=puerto_llm,
                     )
                 except Exception as e:
                     st.exception(e)
@@ -690,7 +693,7 @@ if resultado:
                         valor_clinica=info_kpi["valor"],
                         respuestas_diagnostico=respuestas,
                         serie_historica=info_kpi.get("serie"),
-                        client=client,
+                        puerto=puerto_llm,
                     )
                 except Exception as e:
                     st.exception(e)
@@ -754,7 +757,7 @@ if resultado:
     if st.button("🤖 Proponer cruces con IA"):
         with st.spinner("Llamando a proponer_cruces contra la API real..."):
             try:
-                st.session_state.cruces_propuestos = proponer_cruces(resultado["variables"], client=client)
+                st.session_state.cruces_propuestos = proponer_cruces(resultado["variables"], puerto=puerto_llm)
                 st.session_state.cruces_propuestos_decisiones = {}
             except Exception as e:
                 st.exception(e)

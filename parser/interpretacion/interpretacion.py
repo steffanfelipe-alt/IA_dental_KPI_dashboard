@@ -39,6 +39,7 @@ from parser.vocabulario.schema import KPI_BY_ID
 from parser.diagnostico.benchmarks import calcular_gap, Gap
 from parser.vocabulario.claude_utils import extraer_texto, respuesta_truncada
 from parser.vocabulario.formato import fmt_por_unidad
+from parser.vocabulario.puerto_llm import PuertoLLM
 # Re-exportados desde contexto_cualitativo.py (Fase 4): se movieron ahí
 # para romper un import circular con diagnostico.py, que también los
 # necesita. Quien ya los importaba desde acá (ver test_benchmarks.py)
@@ -205,7 +206,7 @@ def interpretar_kpi(
     semanas_de_datos_propios: Optional[int] = None,
     serie_historica: Optional[dict] = None,
     diagnostico=None,
-    client=None,
+    puerto: Optional[PuertoLLM] = None,
 ) -> dict:
     """
     Interpreta un solo KPI: calcula el gap contra el benchmark argentino
@@ -222,10 +223,16 @@ def interpretar_kpi(
     externo (hallazgo 4).
 
     `diagnostico` (Fase 4, opcional — compatible hacia atrás con
-    `client=None` en los tests): un `diagnostico.Diagnostico` ya calculado
+    `puerto=None` en los tests): un `diagnostico.Diagnostico` ya calculado
     para este KPI. Si se pasa, sus contradicciones/patrones/estado viajan
     en el payload como hechos ya verificados (ver regla 8 del prompt) — el
     modelo no tiene que re-derivarlos desde cero.
+
+    `puerto` (deuda-panel-sistemas-puertollm, U1): antes `client` crudo de
+    Anthropic. Habla contra `PuertoLLM.preguntar_con_truncamiento` en vez
+    de `client.messages.create(...)` directo — mismo Protocol que ya usa
+    el camino de extracción (puerto_llm.py), pero con el método que
+    preserva la señal de truncamiento que este entry point necesita.
     """
     if semanas_de_datos_propios is None:
         semanas_de_datos_propios = semanas_desde_serie(serie_historica)
@@ -247,12 +254,12 @@ def interpretar_kpi(
         "diagnostico": _serializar_diagnostico(diagnostico),
     }
 
-    if client is None:
-        # Sin cliente configurado, devolvemos el payload crudo para poder
+    if puerto is None:
+        # Sin puerto configurado, devolvemos el payload crudo para poder
         # inspeccionar la lógica de gap + contexto sin llamar a la API.
         return {"payload_enviado_al_asistente": payload, "interpretacion": None, "truncado": False}
 
-    respuesta = client.messages.create(
+    texto, truncado = puerto.preguntar_con_truncamiento(
         model=MODEL,
         # Fase G2: 800 truncaba con datos reales (7 KPIs + contexto
         # cualitativo cargado) — max_tokens es un techo, no un cargo, así
@@ -267,8 +274,8 @@ def interpretar_kpi(
     )
     return {
         "payload_enviado_al_asistente": payload,
-        "interpretacion": extraer_texto(respuesta),
-        "truncado": respuesta_truncada(respuesta),
+        "interpretacion": texto,
+        "truncado": truncado,
     }
 
 
@@ -276,7 +283,7 @@ def interpretar_panel(
     kpis_calculados: dict[int, dict],
     respuestas_diagnostico: dict[str, str],
     diagnostico=None,
-    client=None,
+    puerto: Optional[PuertoLLM] = None,
 ) -> dict:
     """
     Interpreta TODO el panel en una sola llamada — a diferencia de
@@ -295,6 +302,9 @@ def interpretar_panel(
     que devuelve `diagnostico.diagnosticar()` — ya trae los patrones
     cruzados y contradicciones estructurados (regla 8 del prompt), así
     que el modelo no tiene que re-derivarlos desde el payload crudo.
+
+    `puerto` (deuda-panel-sistemas-puertollm, U1): ver docstring de
+    `interpretar_kpi` — mismo cambio de `client` crudo a `PuertoLLM`.
     """
     contexto_general = construir_contexto_cualitativo(respuestas_diagnostico, kpi_id=None)
 
@@ -327,10 +337,10 @@ def interpretar_panel(
         "diagnostico": _serializar_diagnostico(diagnostico),
     }
 
-    if client is None:
+    if puerto is None:
         return {"payload_enviado_al_asistente": payload, "interpretacion": None, "truncado": False}
 
-    respuesta = client.messages.create(
+    texto, truncado = puerto.preguntar_con_truncamiento(
         model=MODEL,
         # Fase G2: 2000 también truncaba con datos reales (7 KPIs a la
         # vez, cruzándolos entre sí). Mismo criterio que interpretar_kpi:
@@ -348,8 +358,8 @@ def interpretar_panel(
     )
     return {
         "payload_enviado_al_asistente": payload,
-        "interpretacion": extraer_texto(respuesta),
-        "truncado": respuesta_truncada(respuesta),
+        "interpretacion": texto,
+        "truncado": truncado,
     }
 
 

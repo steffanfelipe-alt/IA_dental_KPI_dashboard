@@ -17,9 +17,10 @@
  * runtime harness pass (see apply-progress), same as PR3/PR4 did for
  * their own pages.
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { resolveSistemaBreadcrumb } from "@/lib/nav";
+import { AnclajeProvider } from "@/lib/anclaje/AnclajeContext";
 import { SystemsBlock } from "@/components/systems/SystemsBlock";
 import { SystemMedallion } from "@/components/systems/SystemMedallion";
 import { MetricCard } from "@/components/metrics/MetricCard";
@@ -89,11 +90,16 @@ function metrica(overrides: Partial<Metrica> = {}): Metrica {
 }
 
 describe("Cross-screen navigation contract (task 7.5)", () => {
+  beforeEach(() => window.localStorage.clear());
   afterEach(cleanup);
 
   describe("A (panel) → C (system detail): SystemsBlock emits ?from=panel", () => {
     it("links an A3 main-list system to /sistemas/[slug]?from=panel", () => {
-      render(<SystemsBlock sistemas={[sistema({ slug: "campana-reactivacion", nombre: "Campaña de reactivación", estado: "en_proceso" })]} />);
+      render(
+        <AnclajeProvider>
+          <SystemsBlock sistemas={[sistema({ slug: "campana-reactivacion", nombre: "Campaña de reactivación", estado: "en_proceso" })]} />
+        </AnclajeProvider>,
+      );
 
       // Accessible name of the whole card link concatenates its visible text (name + status chip), so match by substring.
       const link = screen.getByRole("link", { name: /Campaña de reactivación/ }) as HTMLAnchorElement;
@@ -101,7 +107,11 @@ describe("Cross-screen navigation contract (task 7.5)", () => {
     });
 
     it("links an anchored (A3-bis) system's name to /sistemas/[slug]?from=panel, kept separate from the Desanclar button", () => {
-      render(<SystemsBlock sistemas={[sistema({ slug: "programa-referidos", nombre: "Programa de referidos", estado: "disponible", anclado: true })]} />);
+      render(
+        <AnclajeProvider>
+          <SystemsBlock sistemas={[sistema({ slug: "programa-referidos", nombre: "Programa de referidos", estado: "disponible", anclado: true })]} />
+        </AnclajeProvider>,
+      );
 
       const link = screen.getByRole("link", { name: "Programa de referidos" }) as HTMLAnchorElement;
       expect(link.getAttribute("href")).toBe("/sistemas/programa-referidos?from=panel");

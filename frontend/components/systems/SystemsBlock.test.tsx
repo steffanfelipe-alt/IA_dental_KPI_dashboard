@@ -1,9 +1,19 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { SystemsBlock } from "./SystemsBlock";
+import { AnclajeProvider } from "@/lib/anclaje/AnclajeContext";
 import { COPY } from "@/lib/copy";
 import type { Sistema } from "@/lib/types";
+
+/** `SystemsBlock` reads anchoring from the shared `AnclajeContext` (task 5.3) — every render needs the provider. */
+function renderSystemsBlock(sistemas: Sistema[]) {
+  return render(
+    <AnclajeProvider>
+      <SystemsBlock sistemas={sistemas} />
+    </AnclajeProvider>,
+  );
+}
 
 function sistema(overrides: Partial<Sistema> = {}): Sistema {
   return {
@@ -26,6 +36,7 @@ function sistema(overrides: Partial<Sistema> = {}): Sistema {
 }
 
 describe("SystemsBlock (task 4.3/4.4)", () => {
+  beforeEach(() => window.localStorage.clear());
   afterEach(cleanup);
 
   it("disables the anchor action with the exact limit copy once 4 systems are anchored", () => {
@@ -34,7 +45,7 @@ describe("SystemsBlock (task 4.3/4.4)", () => {
     );
     const candidato = sistema({ slug: "candidato-1", nombre: "Candidato uno", estado: "disponible", anclado: false });
 
-    render(<SystemsBlock sistemas={[...anclados, candidato]} />);
+    renderSystemsBlock([...anclados, candidato]);
 
     const boton = screen.getByRole("button", { name: `${COPY.panel.accionAnclar} Candidato uno` }) as HTMLButtonElement;
     expect(boton.disabled).toBe(true);
@@ -48,7 +59,7 @@ describe("SystemsBlock (task 4.3/4.4)", () => {
     );
     const candidato = sistema({ slug: "candidato-1", nombre: "Candidato uno", estado: "disponible", anclado: false });
 
-    render(<SystemsBlock sistemas={[...anclados, candidato]} />);
+    renderSystemsBlock([...anclados, candidato]);
 
     const boton = screen.getByRole("button", { name: `${COPY.panel.accionAnclar} Candidato uno` }) as HTMLButtonElement;
     expect(boton.disabled).toBe(false);
@@ -64,7 +75,7 @@ describe("SystemsBlock (task 4.3/4.4)", () => {
       motivoSugerencia: "Motivo de la sugerencia.",
     });
 
-    render(<SystemsBlock sistemas={[promovido]} />);
+    renderSystemsBlock([promovido]);
 
     expect(screen.getAllByText("Sistema promovido")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: `${COPY.panel.accionDesanclar} Sistema promovido` })).toBeNull();
@@ -79,7 +90,7 @@ describe("SystemsBlock (task 4.3/4.4)", () => {
       anclado: true,
     });
 
-    render(<SystemsBlock sistemas={[promovido]} />);
+    renderSystemsBlock([promovido]);
 
     expect(screen.getAllByText("Sistema en curso")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: `${COPY.panel.accionDesanclar} Sistema en curso` })).toBeNull();
@@ -88,7 +99,7 @@ describe("SystemsBlock (task 4.3/4.4)", () => {
   it("never shows a non-anchored disponible system in the main A3 list", () => {
     const disponible = sistema({ slug: "disponible-1", nombre: "Sistema disponible", estado: "disponible", anclado: false });
 
-    render(<SystemsBlock sistemas={[disponible]} />);
+    renderSystemsBlock([disponible]);
 
     // Only rendered once, as a compact anchor-candidate button, not as a full A3 card with a status chip.
     expect(screen.getAllByRole("button", { name: `${COPY.panel.accionAnclar} Sistema disponible` })).toHaveLength(1);

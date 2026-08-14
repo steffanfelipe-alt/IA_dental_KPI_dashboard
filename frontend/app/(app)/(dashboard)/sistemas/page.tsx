@@ -6,8 +6,10 @@ import { AGRUPACION_SEARCH_PARAM } from "@/lib/searchParams";
 import { ESTADO_LABEL } from "@/components/systems/SystemStatusChip";
 import { SystemMedallion } from "@/components/systems/SystemMedallion";
 import { MetricTypeFilter, type AgrupacionCatalogo } from "@/components/metrics/MetricTypeFilter";
+import { AnchorButton } from "@/components/systems/AnchorButton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
+import { AnclajeSeed } from "@/lib/anclaje/AnclajeSeed";
 import type { EstadoSistema, Sistema } from "@/lib/types";
 
 /**
@@ -28,6 +30,13 @@ import type { EstadoSistema, Sistema } from "@/lib/types";
  * `nivelEmbudo` (default) or `categoria` via `MetricTypeFilter`'s
  * Embudo/Categoría toggle, `?agrupacion=` shareable by URL like
  * `PeriodPicker`'s `?periodo=` on Pantalla A.
+ *
+ * Task 5.4: each catalog tile now carries an `AnchorButton` alongside its
+ * `SystemMedallion` — this is the OTHER entry point (with `/panel`'s
+ * `SystemsBlock`) that can anchor/unanchor a `disponible` system into the
+ * shared `AnclajeContext`. `AnclajeSeed` runs here too (not just on
+ * `/panel`) so the initial `anclado: true` mock seed still applies even
+ * if a clinic's very first visit is this catalog, not the panel.
  */
 const ESTADO_ORDEN_PANORAMA: EstadoSistema[] = ["implementado", "en_proceso", "sugerido", "disponible"];
 
@@ -76,9 +85,11 @@ export default async function SistemasPage({
   }
 
   const grupos = agrupacion === "categoria" ? agruparPorCategoria(sistemas) : agruparPorEmbudo(sistemas);
+  const seedSlugs = sistemas.filter((sistema) => sistema.estado === "disponible" && sistema.anclado).map((sistema) => sistema.slug);
 
   return (
     <div className="flex flex-col gap-8 p-8">
+      <AnclajeSeed slugs={seedSlugs} />
       <h1 className="text-2xl font-semibold text-text-strong">{COPY.sistemas.screenTitle}</h1>
 
       <section>
@@ -126,8 +137,9 @@ export default async function SistemasPage({
                 <p className="mb-2 text-xs font-semibold tracking-wide text-text-muted uppercase">{grupo.label}</p>
                 <ul className="flex flex-wrap gap-4" role="list" aria-label={grupo.label}>
                   {grupo.items.map((sistema) => (
-                    <li key={sistema.slug}>
+                    <li key={sistema.slug} className="flex flex-col items-center gap-2">
                       <SystemMedallion sistema={sistema} />
+                      <AnchorButton sistema={sistema} />
                     </li>
                   ))}
                 </ul>

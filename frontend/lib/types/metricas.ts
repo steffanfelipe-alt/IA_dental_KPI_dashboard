@@ -19,6 +19,8 @@
  * just swapping a mock import for a `fetch` call. Do not treat this file
  * as a source of truth for what the backend actually sends today.
  */
+import type { Direccion } from "../types";
+
 export interface MetricaCalculada {
   kpi_id: number;
   nombre: string;
@@ -29,4 +31,12 @@ export interface MetricaCalculada {
   /** `{ "2026-01": 22.1, ... }` — null when the KPI has no meaningful time series. */
   serie: Record<string, number> | null;
   agregados: { promedio: number; mediana: number; ultimo: number } | null;
+  /**
+   * Transcribed 1:1 from `BENCHMARKS_AR[kpi_id].mejor_es` (backend
+   * `parser/diagnostico/benchmarks.py`) — see `lib/mock/veredicto.ts`.
+   * `null` for the 6 KPIs (11, 14, 16, 17, 18, 20) that declare no
+   * direction there. NEVER inferred from the series trend: a metric with
+   * no declared direction stays `null`, it does not get guessed.
+   */
+  direccion: Direccion | null;
 }

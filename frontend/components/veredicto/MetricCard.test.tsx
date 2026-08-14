@@ -23,6 +23,7 @@ const metricaConSerie: MetricaCalculada = {
   fuentes: ["planilla_turnos.xlsx"],
   serie: { "2026-01": 22.0, "2026-02": 18.9 },
   agregados: { promedio: 20.45, mediana: 20.45, ultimo: 18.9 },
+  direccion: "menor_mejor",
 };
 
 const metricaSinSerie: MetricaCalculada = {
@@ -34,6 +35,7 @@ const metricaSinSerie: MetricaCalculada = {
   fuentes: ["respuestas_diagnostico"],
   serie: null,
   agregados: null,
+  direccion: null,
 };
 
 describe("MetricCard (task 3.7)", () => {

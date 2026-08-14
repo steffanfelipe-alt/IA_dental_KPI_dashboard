@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluarMetrica } from "./semantics";
+import { evaluarMetrica, evaluarMetricaCalculada } from "./semantics";
 
 function metrica(overrides: {
   valorActual: number;
@@ -59,5 +59,49 @@ describe("evaluarMetrica", () => {
     expect(resultado.avanceHaciaObjetivo).not.toBeNull();
     expect(resultado.avanceHaciaObjetivo as number).toBeGreaterThan(0);
     expect(resultado.avanceHaciaObjetivo as number).toBeLessThan(100);
+  });
+});
+
+describe("evaluarMetricaCalculada (U2 adapter from serie, task 3.5)", () => {
+  it("menor_mejor + serie bajando en los últimos 2 puntos → good", () => {
+    const estado = evaluarMetricaCalculada({
+      direccion: "menor_mejor",
+      serie: { "2026-01": 22.0, "2026-02": 20.0, "2026-03": 15.0 },
+    });
+    expect(estado).toBe("good");
+  });
+
+  it("mayor_mejor + serie bajando en los últimos 2 puntos → bad", () => {
+    const estado = evaluarMetricaCalculada({
+      direccion: "mayor_mejor",
+      serie: { "2026-01": 40, "2026-02": 50, "2026-03": 42 },
+    });
+    expect(estado).toBe("bad");
+  });
+
+  it("cambio bajo el piso de 2% entre los últimos 2 puntos → flat", () => {
+    const estado = evaluarMetricaCalculada({
+      direccion: "mayor_mejor",
+      serie: { "2026-01": 10, "2026-02": 60, "2026-03": 60.5 },
+    });
+    expect(estado).toBe("flat");
+  });
+
+  it("direccion null → null, nunca inferida (Sparkline renderiza neutro)", () => {
+    const estado = evaluarMetricaCalculada({
+      direccion: null,
+      serie: { "2026-01": 10, "2026-02": 20, "2026-03": 30 },
+    });
+    expect(estado).toBeNull();
+  });
+
+  it("serie null → null (no hay puntos para comparar)", () => {
+    const estado = evaluarMetricaCalculada({ direccion: "mayor_mejor", serie: null });
+    expect(estado).toBeNull();
+  });
+
+  it("serie con un solo punto → null (no hay 'anterior' para comparar)", () => {
+    const estado = evaluarMetricaCalculada({ direccion: "mayor_mejor", serie: { "2026-01": 10 } });
+    expect(estado).toBeNull();
   });
 });

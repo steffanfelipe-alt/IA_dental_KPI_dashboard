@@ -1,6 +1,7 @@
 "use client";
 
 import { Sparkline } from "@/components/veredicto/Sparkline";
+import { evaluarMetricaCalculada } from "@/lib/semantics";
 import type { MetricaCalculada } from "@/lib/types/metricas";
 
 /**
@@ -15,9 +16,14 @@ import type { MetricaCalculada } from "@/lib/types/metricas";
  * Metrics without a period series (`serie: null`, kpi_id 17-20 in the
  * mock — see `lib/mock/veredicto.ts`) render without the sparkline/period
  * row; only the value is shown for those.
+ *
+ * Sparkline color (U2): `evaluarMetricaCalculada` derives good/bad/flat
+ * from `metrica.direccion` + the last 2 `serie` points, or `null` when
+ * `direccion` isn't declared — `Sparkline` renders neutral blue on `null`.
  */
 export function MetricCard({ metrica, onClick }: { metrica: MetricaCalculada; onClick: () => void }) {
   const periodos = metrica.serie ? Object.keys(metrica.serie) : [];
+  const estado = evaluarMetricaCalculada(metrica);
 
   return (
     <button
@@ -33,7 +39,7 @@ export function MetricCard({ metrica, onClick }: { metrica: MetricaCalculada; on
             <span className="text-sm font-normal text-ink-600">{metrica.unidad}</span>
           </p>
         </div>
-        {metrica.serie ? <Sparkline serie={metrica.serie} /> : null}
+        {metrica.serie ? <Sparkline serie={metrica.serie} estado={estado} /> : null}
       </div>
 
       {periodos.length > 0 ? (

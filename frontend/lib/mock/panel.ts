@@ -41,7 +41,11 @@ function generarPeriodos(cantidad: number, anioFin: number, mesFin: number): str
   return periodos;
 }
 
-const PERIODOS_24M = generarPeriodos(CANTIDAD_MESES, ANIO_FIN, MES_FIN);
+// Exported so `lib/data/panel.ts::getPanel` can use it as the reference
+// for "how many real periods are actually available" when windowing
+// `valorActual`/`valorAnterior` by `?periodo=` (Phase 4/U5) — it must not
+// hardcode `24` separately from this fixture's own period count.
+export const PERIODOS_24M = generarPeriodos(CANTIDAD_MESES, ANIO_FIN, MES_FIN);
 
 function siguientePeriodo(periodo: string): string {
   const [anioStr, mesStr] = periodo.split("-");

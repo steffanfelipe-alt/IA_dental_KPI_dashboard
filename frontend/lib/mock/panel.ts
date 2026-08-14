@@ -160,6 +160,9 @@ export const MOCK_METRICAS: Metrica[] = [
     porQueImporta: "Cada no-show es una silla vacía que ya tenía costo fijo asignado.",
     tipo: "retencion",
     direccion: "menor_mejor",
+    // kpi_id 4 ("Tasa de no-show", KPI_FORMULAS) — BENCHMARKS_AR[4] is
+    // confiabilidad: "consultora_ar", rango_bajo=8/rango_alto=15. 12 sits
+    // inside that real range (a healthy target, not the excellent floor).
     objetivo: 12,
     valorInicial: 26,
     valorFinal: 18.9,
@@ -177,6 +180,9 @@ export const MOCK_METRICAS: Metrica[] = [
     porQueImporta: "Reactivar un paciente existente cuesta una fracción de captar uno nuevo.",
     tipo: "reactivacion",
     direccion: "mayor_mejor",
+    // kpi_id 9 ("Tasa de reactivación", KPI_FORMULAS) — BENCHMARKS_AR[9] is
+    // confiabilidad: "proxy_internacional", rango_bajo=15/rango_alto=25.
+    // 25 is the top of that real range.
     objetivo: 25,
     valorInicial: 10,
     valorFinal: 16.1,
@@ -193,6 +199,9 @@ export const MOCK_METRICAS: Metrica[] = [
     porQueImporta: "Un presupuesto no aceptado es tratamiento identificado que no se convierte en ingreso.",
     tipo: "conversion",
     direccion: "mayor_mejor",
+    // kpi_id 5 ("Tasa de aceptación de presupuestos", KPI_FORMULAS) —
+    // BENCHMARKS_AR[5] is confiabilidad: "proxy_internacional",
+    // rango_bajo=65/rango_alto=75. 65 is the floor of that real range.
     objetivo: 65,
     valorInicial: 47,
     valorFinal: 55.8,
@@ -209,7 +218,11 @@ export const MOCK_METRICAS: Metrica[] = [
     porQueImporta: "Es el tope del embudo: sin captación nueva, todo lo demás corre sobre una base fija.",
     tipo: "captacion",
     direccion: "mayor_mejor",
-    objetivo: 70,
+    // kpi_id 1 ("Consultas nuevas / mes", KPI_FORMULAS) — BENCHMARKS_AR[1]
+    // is confiabilidad: "sin_benchmark" (raw count, no universal target
+    // possible — it depends 100% on clinic size). No numeric objetivo may
+    // be fabricated here.
+    objetivo: null,
     valorInicial: 40,
     valorFinal: 53,
     decimales: 0,
@@ -226,6 +239,11 @@ export const MOCK_METRICAS: Metrica[] = [
     porQueImporta: "Mide qué tan bien se aprovecha el tiempo clínico disponible, no solo cuánto se cobra.",
     tipo: "operacion",
     direccion: "mayor_mejor",
+    // kpi_id 12 ("Producción por hora-sillón", KPI_FORMULAS) —
+    // BENCHMARKS_AR[12] is confiabilidad: "proxy_internacional" but
+    // rango_bajo/rango_alto are both None (USD proxy, no ARS exchange-rate
+    // figure the backend trusts — see benchmarks.py module docstring). No
+    // rango means no real number to transcribe.
     objetivo: null,
     valorInicial: 3600,
     valorFinal: 4310,
@@ -243,7 +261,13 @@ export const MOCK_METRICAS: Metrica[] = [
     porQueImporta: "Cada hora en tareas repetitivas es una hora que no se dedica a pacientes o a mejorar el negocio.",
     tipo: "operacion",
     direccion: "menor_mejor",
-    objetivo: 8,
+    // kpi_id 15 ("Horas/semana en tareas repetitivas", KPI_FORMULAS) —
+    // BENCHMARKS_AR[15] is confiabilidad: "proxy_internacional" but
+    // rango_bajo/rango_alto are both None (regional estimate, not an
+    // auditable hard figure — see benchmarks.py module docstring). No
+    // rango means no real number to transcribe, so objetivo stays null
+    // even though confiabilidad isn't literally "sin_benchmark".
+    objetivo: null,
     valorInicial: 24,
     valorFinal: 17.5,
     amplitudRuido: 0.4,

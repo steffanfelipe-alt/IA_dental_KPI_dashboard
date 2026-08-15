@@ -7,6 +7,7 @@ import { ESTADO_LABEL } from "@/components/systems/SystemStatusChip";
 import { SystemMedallion } from "@/components/systems/SystemMedallion";
 import { MetricTypeFilter, type AgrupacionCatalogo } from "@/components/metrics/MetricTypeFilter";
 import { AnchorButton } from "@/components/systems/AnchorButton";
+import { MetricasEstado } from "@/components/systems/MetricasEstado";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { AnclajeSeed } from "@/lib/anclaje/AnclajeSeed";
@@ -23,13 +24,26 @@ import type { EstadoSistema, Sistema } from "@/lib/types";
  * designed for browsing all systems". First real caller of
  * `getSistemas`.
  *
- * Three sections, top to bottom: (1) panorama counts, (2) a `TODO(felpa)`
- * placeholder for "Métricas y estado" (SPEC scenario "Undefined block
- * placeholder" — no confirmed layout exists, so a visible placeholder
- * ships instead of invented content), (3) the catalog itself, grouped by
- * `nivelEmbudo` (default) or `categoria` via `MetricTypeFilter`'s
+ * Three sections, top to bottom: (1) panorama counts, (2) "Métricas y
+ * estado" — Slice 2 WU-B2 replaces the earlier `TODO(felpa)` placeholder
+ * with `MetricasEstado`, one instance per system that has at least one
+ * associated metric, splitting `directa`/`indirecta` per SPEC "Métricas y
+ * Estado — Direct and Indirect Impact" — (3) the catalog itself, grouped
+ * by `nivelEmbudo` (default) or `categoria` via `MetricTypeFilter`'s
  * Embudo/Categoría toggle, `?agrupacion=` shareable by URL like
  * `PeriodPicker`'s `?periodo=` on Pantalla A.
+ *
+ * `PERIODO_METRICAS_ESTADO` ("6m") is passed to `getSistemas` — NOT a
+ * user-facing `?periodo=` picker like Pantalla A's — because SPEC's
+ * "Métricas y Estado" requirement pins this block to a fixed "last 6
+ * real periods" window, not a selectable one. `getSistema`/`getSistemas`
+ * (WU-B1) compute `impactoReal` from the metric's UNWINDOWED
+ * `valorActual`/`valorAlImplementar` by construction (see
+ * `lib/data/sistemas.ts::conVentanaEImpacto`), so this call doesn't
+ * change what `MetricasEstado` renders today — it's here so the loader
+ * call itself satisfies the SPEC windowing requirement and so any future
+ * consumer of the windowed `valorActual`/`valorAnterior` on this same
+ * `Sistema[]` gets the right window without a second fetch.
  *
  * Task 5.4: each catalog tile now carries an `AnchorButton` alongside its
  * `SystemMedallion` — this is the OTHER entry point (with `/panel`'s
@@ -38,6 +52,7 @@ import type { EstadoSistema, Sistema } from "@/lib/types";
  * `/panel`) so the initial `anclado: true` mock seed still applies even
  * if a clinic's very first visit is this catalog, not the panel.
  */
+const PERIODO_METRICAS_ESTADO = "6m";
 const ESTADO_ORDEN_PANORAMA: EstadoSistema[] = ["implementado", "en_proceso", "sugerido", "disponible"];
 
 interface GrupoCatalogo {
@@ -75,7 +90,7 @@ export default async function SistemasPage({
   let sistemas: Sistema[];
   try {
     const clinicaId = await resolverClinicaIdActual();
-    sistemas = await getSistemas(clinicaId);
+    sistemas = await getSistemas(clinicaId, PERIODO_METRICAS_ESTADO);
   } catch {
     return (
       <div className="p-8">
@@ -86,6 +101,7 @@ export default async function SistemasPage({
 
   const grupos = agrupacion === "categoria" ? agruparPorCategoria(sistemas) : agruparPorEmbudo(sistemas);
   const seedSlugs = sistemas.filter((sistema) => sistema.estado === "disponible" && sistema.anclado).map((sistema) => sistema.slug);
+  const sistemasConMetricas = sistemas.filter((sistema) => sistema.metricas.length > 0);
 
   return (
     <div className="flex flex-col gap-8 p-8">
@@ -117,9 +133,15 @@ export default async function SistemasPage({
 
       <section>
         <h2 className="mb-3 text-lg font-semibold text-text-strong">{COPY.sistemas.bloqueMetricasYEstado}</h2>
-        <div className="rounded-2xl border border-dashed border-border-subtle bg-surface p-6 text-sm text-text-muted">
-          {COPY.sistemas.bloqueMetricasYEstadoTodo}
-        </div>
+        {sistemasConMetricas.length === 0 ? (
+          <EmptyState title="Todavía no hay métricas asociadas a ningún sistema." />
+        ) : (
+          <div className="flex flex-col gap-4">
+            {sistemasConMetricas.map((sistema) => (
+              <MetricasEstado key={sistema.slug} sistema={sistema} />
+            ))}
+          </div>
+        )}
       </section>
 
       <section>

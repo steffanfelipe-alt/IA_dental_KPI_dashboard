@@ -14,6 +14,17 @@
  * with near-duplicate entries; PR2/PR3 extend this list if a screen
  * needs more variety once it's actually being built against.
  *
+ * Slice 2 (WU-B1, "Métricas y estado"): +4 metrics (kpi_id 2/3/8/13, all
+ * unused by the original six and still real `BENCHMARKS_AR` entries — see
+ * `parser/diagnostico/benchmarks.py`) so `lib/mock/sistemas.ts` has
+ * enough DISTINCT real metrics to give one implemented system ≥9 indirect
+ * associations (SPEC "Exhaustive indirect listing") without reusing the
+ * same slug twice on one system. Not in design's WU-B1 file table, which
+ * only names `mock/sistemas.ts` — extending this file is the documented
+ * escape hatch above ("extend this list if a screen needs more variety"),
+ * not a scope invention; every added entry keeps this file's own
+ * "objetivo honesty" convention (real `kpi_id`, real `confiabilidad`).
+ *
  * `sistemasAsociados` embeds `SistemaRef` literals (slug/nombre/estado)
  * matching `lib/mock/sistemas.ts` — this file does NOT import that one
  * (kept import-direction one-way: `sistemas.ts` imports from here, not
@@ -278,5 +289,81 @@ export const MOCK_METRICAS: Metrica[] = [
     impactoScore: 58,
     vulnerabilidadScore: 62,
     sistemasAsociados: [{ slug: "automatizacion-cobros", nombre: "Automatización de cobros", estado: "disponible" }],
+  }),
+  metrica({
+    slug: "tiempo-primera-respuesta",
+    nombre: "Tiempo de 1ª respuesta",
+    unidad: "min",
+    definicion: "Minutos entre el primer contacto de un paciente potencial y la primera respuesta de la clínica.",
+    porQueImporta: "Un lead que espera demasiado para recibir respuesta suele agendar en otra clínica que respondió antes.",
+    tipo: "captacion",
+    direccion: "menor_mejor",
+    // kpi_id 2 ("Tiempo de 1ª respuesta", KPI_FORMULAS) — BENCHMARKS_AR[2]
+    // es confiabilidad: "proxy_internacional", rango_bajo=0/rango_alto=5.
+    // 3 es un objetivo sano dentro del rango, no el piso ideal (<2 min).
+    objetivo: 3,
+    valorInicial: 6.5,
+    valorFinal: 4.2,
+    amplitudRuido: 0.3,
+    impactoScore: 60,
+    vulnerabilidadScore: 50,
+    sistemasAsociados: [{ slug: "recordatorios-turnos", nombre: "Recordatorios automáticos de turnos", estado: "implementado" }],
+  }),
+  metrica({
+    slug: "tasa-agendamiento",
+    nombre: "Tasa de agendamiento",
+    unidad: "%",
+    definicion: "Consultas nuevas que efectivamente agendaron turno, sobre el total de consultas nuevas del período.",
+    porQueImporta: "Agendar el turno es el primer paso real después del contacto: sin eso, la consulta nueva no se convierte en nada.",
+    tipo: "conversion",
+    direccion: "mayor_mejor",
+    // kpi_id 3 ("Tasa de agendamiento", KPI_FORMULAS) — BENCHMARKS_AR[3]
+    // es confiabilidad: "proxy_internacional", rango_bajo=35/rango_alto=50.
+    // 35 es el piso de ese rango real.
+    objetivo: 35,
+    valorInicial: 30,
+    valorFinal: 36.4,
+    amplitudRuido: 0.6,
+    impactoScore: 55,
+    vulnerabilidadScore: 45,
+    sistemasAsociados: [{ slug: "recordatorios-turnos", nombre: "Recordatorios automáticos de turnos", estado: "implementado" }],
+  }),
+  metrica({
+    slug: "tasa-recall-retencion",
+    nombre: "Recall / retención",
+    unidad: "%",
+    definicion: "Pacientes dados de alta que vuelven a control en el período.",
+    porQueImporta: "Retener un paciente ya captado en control preventivo cuesta una fracción de recuperarlo después de que se fue.",
+    tipo: "retencion",
+    direccion: "mayor_mejor",
+    // kpi_id 8 ("Recall / retención", KPI_FORMULAS) — BENCHMARKS_AR[8] es
+    // confiabilidad: "proxy_internacional", rango_bajo=70/rango_alto=80.
+    // 70 es el piso de ese rango real.
+    objetivo: 70,
+    valorInicial: 58,
+    valorFinal: 66.2,
+    amplitudRuido: 0.5,
+    impactoScore: 50,
+    vulnerabilidadScore: 68,
+    sistemasAsociados: [{ slug: "recordatorios-turnos", nombre: "Recordatorios automáticos de turnos", estado: "implementado" }],
+  }),
+  metrica({
+    slug: "tasa-cobro",
+    nombre: "Tasa de cobro",
+    unidad: "%",
+    definicion: "Monto efectivamente cobrado sobre el monto facturado en el período.",
+    porQueImporta: "Facturar sin cobrar es producción que nunca se convierte en caja.",
+    tipo: "operacion",
+    direccion: "mayor_mejor",
+    // kpi_id 13 ("Tasa de cobro", KPI_FORMULAS) — BENCHMARKS_AR[13] es
+    // confiabilidad: "proxy_internacional", rango_bajo=95/rango_alto=100.
+    // 95 es el piso de ese rango real.
+    objetivo: 95,
+    valorInicial: 87,
+    valorFinal: 92.3,
+    amplitudRuido: 0.4,
+    impactoScore: 45,
+    vulnerabilidadScore: 40,
+    sistemasAsociados: [{ slug: "recordatorios-turnos", nombre: "Recordatorios automáticos de turnos", estado: "implementado" }],
   }),
 ];

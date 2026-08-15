@@ -34,7 +34,7 @@ def _valores_numericos(serie: dict) -> list[float]:
 
 def calcular_agregado(serie: dict, metodo: str = "promedio") -> Optional[float]:
     """`metodo`: "promedio" | "mediana" | "suma" | "ultimo".
-    Ignora entradas no numéricas de la serie (ej. los KPIs 19/20, cuyo
+    Ignora entradas no numéricas de la serie (ej. el KPI 19, cuyo
     valor por período es un dict) en vez de romper — si no queda ningún
     valor numérico, devuelve None."""
     valores = _valores_numericos(serie)

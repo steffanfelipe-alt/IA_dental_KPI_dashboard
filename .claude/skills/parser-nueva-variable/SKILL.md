@@ -5,7 +5,7 @@ description: Agregar o renombrar una variable del vocabulario del parser (schema
 
 # Agregar una variable nueva al vocabulario
 
-El vocabulario es la pieza central: wizard, extractores y las 20 fórmulas leen del MISMO
+El vocabulario es la pieza central: wizard, extractores y las 16 fórmulas leen del MISMO
 diccionario. Agregar una variable no es una línea — toca varios archivos acoplados y tiene
 reglas sutiles. Este es el checklist en orden.
 

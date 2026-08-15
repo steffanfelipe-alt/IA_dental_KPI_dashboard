@@ -242,8 +242,8 @@ def test_leer_formatos_de_csv_devuelve_vacio():
 
 def test_ingreso_por_paciente_fusiona_variantes_del_mismo_nombre_via_matching():
     # El bug real del doc de deficiencias (punto 3): sin matching, "Juan
-    # Perez" y "J. Perez" quedan como dos claves del dict y KPI 14 (LTV)
-    # se subestima en silencio.
+    # Perez" y "J. Perez" quedan como dos claves del dict y el LTV real
+    # (ltv_real()) se subestima en silencio.
     from parser.pacientes.matching import RegistroClientes
 
     df = pd.DataFrame({

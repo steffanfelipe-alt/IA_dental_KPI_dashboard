@@ -11,6 +11,7 @@ import pandas as pd
 
 from parser.cobertura_calidad.coverage import VariableValue, evaluar_cobertura
 from parser.extraccion.excel_parser import aplicar_mapeo
+from parser.vocabulario.schema import KPI_FORMULAS
 
 
 def test_kpi_con_ambas_variables_con_serie_arma_serie_del_kpi():
@@ -121,6 +122,28 @@ def test_kpi21_penetracion_reactivacion_se_calcula_con_reactivados_y_base_total(
     assert 21 in resultado.kpis_calculados, "el KPI 21 debería estar calculado"
     assert resultado.kpis_calculados[21]["valor"] == round(100 * 30 / 600, 1)  # 5.0
     assert 21 not in resultado.kpis_parciales
+
+
+def test_evaluar_cobertura_procesa_todo_kpi_formulas_sin_hardcodear_el_total():
+    # Slice 2 podó KPI_FORMULAS de 21 a 16 entradas — evaluar_cobertura no
+    # debe tener ningún "21"/"20" hardcodeado: itera `for kpi in
+    # KPI_FORMULAS` (coverage.py), así que cada KPI del set actual cae en
+    # exactamente uno de los buckets de CoverageResult, sin importar el
+    # tamaño del set. Con variables vacías, todos quedan bloqueados,
+    # esperando factura, o parciales — nunca calculados.
+    resultado = evaluar_cobertura({})
+    total_procesado = (
+        len(resultado.kpis_calculados)
+        + len(resultado.kpis_parciales)
+        + len(resultado.kpis_bloqueados_por_diseno)
+        + len(resultado.kpis_esperando_facturas)
+        + len(resultado.kpis_esperando_resolucion_conflicto)
+        + len(resultado.kpis_con_error)
+    )
+    assert total_procesado == len(KPI_FORMULAS) == 16, (
+        f"evaluar_cobertura debería cubrir los {len(KPI_FORMULAS)} KPI_FORMULAS actuales, "
+        f"cubrió {total_procesado}"
+    )
 
 
 def test_kpi21_queda_parcial_si_falta_la_base_inactiva_total():

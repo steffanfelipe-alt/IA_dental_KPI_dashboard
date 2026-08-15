@@ -474,10 +474,13 @@ def procesar_migracion(
     # Fase H4c: si hay ledger_pacientes, ltv_real() es una suma real de
     # eventos "pago" ya extraídos de filas concretas — no un despeje
     # algebraico como derivacion.py, así que NO se marca fuente=derivado
-    # (eso la treaparía en confianza 0.6 como si fuera una estimación).
-    # Antes de evaluar_cobertura a propósito: ahí se decide si KPI 14 cae
-    # en kpis_calculados o en kpis_esperando_facturas. Nunca pisa un valor
-    # ya extraído o del wizard (mismo criterio que derivacion.py).
+    # (eso la trataría en confianza 0.6 como si fuera una estimación).
+    # Antes de evaluar_cobertura a propósito, aunque ningún KPIFormula
+    # activo consuma ya "ingreso_por_paciente" (el KPI 14 que lo hacía se
+    # podó en Slice 2) — se sigue poblando la variable porque
+    # resultado["variables"] es también el insumo de metricas_paciente y
+    # de una futura auditoría/trazabilidad. Nunca pisa un valor ya
+    # extraído o del wizard (mismo criterio que derivacion.py).
     ledger_vv = variables.get("ledger_pacientes")
     if ledger_vv is not None and "ingreso_por_paciente" not in variables:
         ingreso = metricas_paciente.ltv_real(ledger_vv.valor)
@@ -557,14 +560,14 @@ def procesar_migracion(
     # `resultado` — no dispara ninguna extracción ni llamada a Claude.
     resultado["calidad_datos"] = evaluar_calidad(resultado)
 
-    # Fase B: cruces determinísticos fuera de las 21 KPIFormula (ver
+    # Fase B: cruces determinísticos fuera de las 16 KPIFormula (ver
     # cruces.py). Corre siempre, con o sin respuestas_diagnostico —
     # a diferencia de las Fases 4-6, no depende de contexto cualitativo.
     # Clave aparte a propósito: un Cruce no tiene kpi_id y no entra a
     # evaluar_cobertura, diagnosticar ni priorizar_oportunidades.
     resultado["cruces"] = generar_cruces(variables)
 
-    # Fase H4c: las 17 métricas de metricas_paciente.py, fuera de las 20
+    # Fase H4c: las 17 métricas de metricas_paciente.py, fuera de las 16
     # KPIFormula por el mismo motivo que los cruces (docstring del
     # módulo) — clave aparte, nunca entra a evaluar_cobertura ni a
     # evaluar_calidad (que ya corrió arriba, así que esto no le cambia el

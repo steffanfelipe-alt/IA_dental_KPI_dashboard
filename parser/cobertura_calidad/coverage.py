@@ -52,7 +52,7 @@ class VariableValue:
     # de TODOS los períodos reales (la fila TOTAL/Promedio ya se excluyó en
     # el extractor). `valor` siempre es el período VIGENTE (el más
     # reciente de `serie`) — nunca un promedio de todo el rango — así las
-    # 21 fórmulas de schema.py, que solo conocen `.valor`, no se tocan.
+    # 16 fórmulas de schema.py, que solo conocen `.valor`, no se tocan.
     serie: Optional[dict[str, Any]] = None
     periodo: Optional[str] = None  # etiqueta del período que representa `valor` (ej. "Abril 2026")
     # Fase 1 (normalización de períodos): `serie` usa claves canónicas

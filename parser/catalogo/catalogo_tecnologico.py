@@ -28,7 +28,7 @@ etapa correspondiente da las intervenciones candidatas sin traducción.
 
 ## Hallazgo: 4 métricas objetivo del catálogo no tenían KPI que las mida
 
-Cruzando las métricas objetivo del catálogo contra los 21 KPIs de
+Cruzando las métricas objetivo del catálogo contra los 16 KPIs de
 schema.py, "hora-sillón ociosa", "tiempo de respuesta a urgencias" y
 "tiempo de respuesta a reclamos" no tenían variable propia — se agregaron
 en la Fase 1 (`horas_sillon_disponibles`, `tiempo_respuesta_urgencias_min`,

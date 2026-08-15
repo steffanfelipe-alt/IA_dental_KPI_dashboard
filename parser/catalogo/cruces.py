@@ -1,7 +1,7 @@
 """
 cruces.py
 
-Fase B del plan de evolución: métricas derivadas fuera de las 20
+Fase B del plan de evolución: métricas derivadas fuera de las 16
 KPIFormula fijas. El catálogo de schema.py es cerrado por diseño — cada
 fórmula corresponde 1:1 a la tabla del Miro (ver docstring de ese módulo)
 — así que ningún cruce entre variables de hojas distintas existe hoy,
@@ -79,7 +79,7 @@ class Cruce:
     impacto_decision: str = ""
 
 
-# Pares (numerador, denominador) que alguna de las 21 KPIFormula ya calcula
+# Pares (numerador, denominador) que alguna de las 16 KPIFormula ya calcula
 # — un cruce que reproduce exactamente ese par se descarta en
 # `generar_cruces`, para no duplicar un KPI que ya existe con otro nombre.
 _PARES_YA_EN_CATALOGO: set[tuple[str, str]] = {
@@ -326,7 +326,7 @@ def _score(cruce: Cruce) -> tuple:
 
 def generar_cruces(variables: dict, limite: Optional[int] = LIMITE_DEFAULT) -> list[Cruce]:
     """Orquestador: junta las dos capas, saca los pares que el catálogo de
-    21 KPIs ya calcula por otro nombre, y ordena por relevancia (¿el
+    16 KPIs ya calcula por otro nombre, y ordena por relevancia (¿el
     catálogo de intervenciones ya la señala como objetivo? ¿cuántos
     períodos comunes tiene? ¿cuánto se movió?) — más relevante primero.
     `limite=None` devuelve todo, sin techo."""

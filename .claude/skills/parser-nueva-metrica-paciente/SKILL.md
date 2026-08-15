@@ -1,12 +1,12 @@
 ---
 name: parser-nueva-metrica-paciente
-description: Agregar una métrica longitudinal al ledger de pacientes (metricas_paciente.py). Usar cuando se quiera medir riesgo/fuga, valor/concentración, ciclo de vida o atribución por paciente — algo que las 20 fórmulas fijas de schema.py no pueden expresar.
+description: Agregar una métrica longitudinal al ledger de pacientes (metricas_paciente.py). Usar cuando se quiera medir riesgo/fuga, valor/concentración, ciclo de vida o atribución por paciente — algo que las 16 fórmulas fijas de schema.py no pueden expresar.
 ---
 
 # Agregar una métrica de paciente
 
 `metricas_paciente.py` calcula métricas sobre `ledger_pacientes` (`{cliente_id: [eventos]}`)
-que las 20 `KPIFormula` no pueden expresar (no-show recurrente, LTV real, concentración de
+que las 16 `KPIFormula` no pueden expresar (no-show recurrente, LTV real, concentración de
 ingresos, retención por cohorte, etc.). Una métrica de paciente NO tiene `kpi_id` — nunca se
 mezcla con los KPIs en el payload.
 

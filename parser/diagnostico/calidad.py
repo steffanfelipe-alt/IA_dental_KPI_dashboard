@@ -58,8 +58,8 @@ def evaluar_calidad(resultado_pipeline: dict) -> ReporteCalidad:
     discrepancias = resultado_pipeline.get("discrepancias_reconciliacion") or []
     variables = resultado_pipeline.get("variables") or {}
 
-    # Los KPIs bloqueados por diseño (variables internas, ej. 16 y 17)
-    # nunca dependen de un archivo ni de una respuesta del wizard — contar
+    # Los KPIs bloqueados por diseño (variables internas, ej. el 16) nunca
+    # dependen de un archivo ni de una respuesta del wizard — contar
     # su ausencia como "incompleto" penalizaría a toda clínica sin motivo,
     # así que se excluyen del denominador.
     kpis_relevantes = len(KPI_FORMULAS) - len(kpis_bloqueados)

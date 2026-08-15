@@ -104,14 +104,14 @@ def peso_benchmark_vs_historial(semanas_de_datos_propios: int) -> dict:
         return {"benchmark": 0.2, "historial": 0.8}   # ya tiene su propia línea base: manda lo propio
 
 
-SEMANAS_POR_PERIODO_MENSUAL = 4.33  # mismo factor que schema._horas_liberadas
+SEMANAS_POR_PERIODO_MENSUAL = 4.33  # promedio de semanas por mes (52/12)
 
 
 def semanas_desde_serie(serie: Optional[dict]) -> int:
     """
     Aproxima cuántas semanas de datos propios representa una serie de
-    períodos mensuales (mismo supuesto de 4.33 semanas/mes que ya usa
-    `schema._horas_liberadas`). Antes de esto, todo llamador dejaba
+    períodos mensuales (mismo supuesto de 4.33 semanas/mes que
+    `SEMANAS_POR_PERIODO_MENSUAL` usa arriba). Antes de esto, todo llamador dejaba
     `semanas_de_datos_propios` en 0 por defecto — la ponderación siempre
     terminaba apoyándose al máximo en el benchmark externo (débil en 11
     de 13 KPIs) aunque la clínica ya tuviera meses de historial propio

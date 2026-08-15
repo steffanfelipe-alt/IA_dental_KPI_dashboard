@@ -1,19 +1,25 @@
 """
 schema.py
 
-Vocabulario común de variables + las 21 fórmulas de KPIs.
+Vocabulario común de variables + las 16 fórmulas de KPIs.
 
 Esta es la pieza central de todo el parser: en vez de que cada KPI defina
 su propia forma de leer datos, todo (wizard, migración de Excel, fotos,
-facturas automáticas) escribe al MISMO diccionario de variables. Las 20
+facturas automáticas) escribe al MISMO diccionario de variables. Las 16
 fórmulas leen de ahí. Esto es lo que permite el chequeo de cobertura "por
 variable, no por KPI" que se decidió en el diseño del onboarding: dos KPIs
 que comparten una variable (ej. consultas_nuevas_mes) nunca la piden dos
 veces.
 
-Las primeras 20 corresponden 1:1 a la tabla "6 · Fórmulas de los 20 KPIs"
-del Miro; la 21 (penetración de reactivación) se agregó después como
-complemento del KPI 9 y no está en esa tabla original.
+El catálogo nació con 21 entradas: las primeras 20 correspondían 1:1 a la
+tabla "6 · Fórmulas de los 20 KPIs" del Miro, y la 21 (penetración de
+reactivación) se agregó después como complemento del KPI 9. Slice 2 podó 5
+KPIs sin linkeo a catálogo, sin benchmark real y sin uso en frontend (11
+Throughput, 14 slot de fórmula LTV, 17 horas-persona liberadas, 18 tareas
+sin backup, 20 rentabilidad por tratamiento), dejando 16 entradas con una
+secuencia de IDs discontinua a propósito: no se renumeró para no romper los
+links `kpi_objetivo`/`kpis_secundarios` del catálogo tecnológico — por eso
+el KPI 21 sigue siendo "21" aunque ya no queden 21 fórmulas.
 """
 
 from dataclasses import dataclass, field
@@ -138,7 +144,7 @@ VARIABLE_TYPES = {
     # se pide en el wizard (SOLO_MIGRACION_O_SISTEMA más abajo): se arma a
     # partir de una hoja transaccional con nombre + fecha por registro, una
     # vez que el nombre pasó por matching.resolver_lote. No es parte de
-    # las 21 fórmulas de KPI_FORMULAS (ver metricas_paciente.py) — es un
+    # las 16 fórmulas de KPI_FORMULAS (ver metricas_paciente.py) — es un
     # insumo aparte para las métricas de riesgo/fuga, valor/concentración,
     # ciclo de vida y atribución que la identidad de paciente desbloquea.
     "ledger_pacientes": "ledger",
@@ -401,13 +407,16 @@ METRICAS: dict[str, MetricaInfo] = {
     "costo_hora_sillon": MetricaInfo(
         "Costo por hora-sillón",
         "Costo operativo en ARS de una hora de sillón ocupado (alquiler, personal, etc. prorrateado).",
-        # Fase G3: es una TARIFA horaria, no un monto total — KPI 20 ya la
-        # multiplica por duracion_tratamiento_horas, así que la fórmula
+        # Fase G3: es una TARIFA horaria, no un monto total — el extinto
+        # KPI 20 (rentabilidad por tratamiento, podado en Slice 2) la
+        # multiplicaba por duracion_tratamiento_horas, así que la fórmula
         # siempre asumió esto; sólo la declaración de unidad estaba mal
         # (era "monto_ars", la misma que un total mensual). Con esto deja
         # de generar cruces.py: ninguna entrada de OPERACIONES_LEGALES usa
         # "monto_ars/hora" como operando, así que ya no compite como un
-        # monto más contra monto_cobrado/monto_facturado.
+        # monto más contra monto_cobrado/monto_facturado. La variable queda
+        # en el vocabulario (Slice 2 no toca VARIABLE_TYPES/METRICAS) aunque
+        # hoy ningún KPIFormula activo la consuma.
         "monto_ars/hora",
         no_confundir_con=(
             "un costo operativo MENSUAL total (alquiler + sueldos del mes, etc.) — "
@@ -515,12 +524,13 @@ METRICAS_EXTRAIBLES: dict[str, MetricaInfo] = {
 # ---------------------------------------------------------------------------
 # 1c. Cruces determinísticos (Fase B) — declaraciones puras, sin lógica.
 #
-# El catálogo de 21 KPIFormula de abajo es cerrado por diseño (ver docstring
-# del módulo): cada fórmula corresponde 1:1 a la tabla del Miro. Pero eso
-# significa que ningún cruce entre variables de hojas distintas existe
-# aunque ambas estén cargadas con serie histórica alineada — ej.
-# monto_cobrado ÷ pacientes_atendidos_periodo (ingreso por paciente
-# atendido) no es ninguno de los 21 KPIs y hoy es invisible.
+# El catálogo de 16 KPIFormula de abajo es cerrado por diseño (ver docstring
+# del módulo): las que quedan corresponden 1:1 a la tabla del Miro (menos
+# las 5 podadas en Slice 2, ver docstring del módulo). Pero eso significa
+# que ningún cruce entre variables de hojas distintas existe aunque ambas
+# estén cargadas con serie histórica alineada — ej. monto_cobrado ÷
+# pacientes_atendidos_periodo (ingreso por paciente atendido) no es
+# ninguno de los 16 KPIs y hoy es invisible.
 #
 # `cruces.py` (módulo aparte, NO este archivo) usa estas dos declaraciones
 # para generar esos cruces sin que el modelo invente ninguna fórmula:
@@ -613,7 +623,7 @@ def _pct(numerador: float, denominador: float) -> Optional[float]:
 
 
 # ---------------------------------------------------------------------------
-# 2. Las 21 fórmulas — cada una lee del dict de variables normalizadas
+# 2. Las 16 fórmulas — cada una lee del dict de variables normalizadas
 # ---------------------------------------------------------------------------
 
 KPI_FORMULAS: list[KPIFormula] = [
@@ -669,10 +679,6 @@ KPI_FORMULAS: list[KPIFormula] = [
                ["resenas_nuevas", "referidos_nuevos", "pacientes_atendidos_periodo"],
                lambda v: _pct(v["resenas_nuevas"] + v["referidos_nuevos"], v["pacientes_atendidos_periodo"])),
 
-    KPIFormula(11, "Throughput (ingresos cobrados)",
-               ["monto_cobrado"],
-               lambda v: v["monto_cobrado"], unidad="$"),
-
     KPIFormula(12, "Producción por hora-sillón",
                ["monto_cobrado", "horas_sillon_ocupadas"],
                lambda v: round(v["monto_cobrado"] / v["horas_sillon_ocupadas"], 2)
@@ -684,12 +690,6 @@ KPI_FORMULAS: list[KPIFormula] = [
                lambda v: _pct(v["monto_cobrado"], v["monto_facturado"]),
                numerador="monto_cobrado", denominador="monto_facturado"),
 
-    KPIFormula(14, "Valor del paciente (LTV)",
-               ["ingreso_por_paciente"],
-               lambda v: round(sum(v["ingreso_por_paciente"].values()) / len(v["ingreso_por_paciente"]), 2)
-               if v["ingreso_por_paciente"] else None,
-               unidad="$"),
-
     KPIFormula(15, "Horas/semana en tareas repetitivas",
                ["horas_tarea_manual_semana"],
                lambda v: round(sum(v["horas_tarea_manual_semana"].values()), 1),
@@ -699,15 +699,6 @@ KPI_FORMULAS: list[KPIFormula] = [
                ["automatizaciones_activas", "tareas_manuales_detectadas"],
                lambda v: _pct(v["automatizaciones_activas"], v["tareas_manuales_detectadas"])),
 
-    KPIFormula(17, "Horas-persona liberadas / mes",
-               ["horas_semana_serie_historica"],
-               lambda v: _horas_liberadas(v["horas_semana_serie_historica"]),
-               unidad="hs/mes"),
-
-    KPIFormula(18, "Tareas que dependen de una sola persona",
-               ["tareas_sin_backup"],
-               lambda v: len(v["tareas_sin_backup"]), unidad="conteo"),
-
     KPIFormula(19, "Costo adquisición vs. reactivación",
                ["gasto_captacion", "pacientes_nuevos_captados", "gasto_reactivacion", "pacientes_reactivados"],
                lambda v: {
@@ -716,10 +707,6 @@ KPI_FORMULAS: list[KPIFormula] = [
                    "costo_reactivacion": round(v["gasto_reactivacion"] / v["pacientes_reactivados"], 2)
                    if v["pacientes_reactivados"] else None,
                }, unidad="$/paciente"),
-
-    KPIFormula(20, "Rentabilidad por tratamiento",
-               ["ingreso_por_tratamiento", "costo_por_tratamiento", "costo_hora_sillon", "duracion_tratamiento_horas"],
-               lambda v: _rentabilidad_por_tratamiento(v), unidad="$"),
 
     # KPI 21: penetración de reactivación = reactivados / base inactiva
     # TOTAL. Complementa el KPI 9 (reactivados / contactados = conversión de
@@ -731,30 +718,6 @@ KPI_FORMULAS: list[KPIFormula] = [
                lambda v: _pct(v["pacientes_reactivados"], v["pacientes_inactivos_total"]),
                numerador="pacientes_reactivados", denominador="pacientes_inactivos_total"),
 ]
-
-
-def _horas_liberadas(serie: list) -> Optional[float]:
-    """Compara el primer y el último punto de la serie histórica de horas/semana."""
-    if len(serie) < 2:
-        return None
-    horas_antes = serie[0][1]
-    horas_despues = serie[-1][1]
-    return round((horas_antes - horas_despues) * 4.33, 1)
-
-
-def _rentabilidad_por_tratamiento(v: dict) -> Optional[dict]:
-    ingresos = v["ingreso_por_tratamiento"]
-    costos = v["costo_por_tratamiento"]
-    costo_hora = v["costo_hora_sillon"]
-    duraciones = v["duracion_tratamiento_horas"]
-    if not ingresos:
-        return None
-    resultado = {}
-    for tipo, ingreso in ingresos.items():
-        costo_insumos = costos.get(tipo, 0)
-        horas = duraciones.get(tipo, 0)
-        resultado[tipo] = round(ingreso - (costo_insumos + costo_hora * horas), 2)
-    return resultado
 
 
 KPI_BY_ID = {k.id: k for k in KPI_FORMULAS}

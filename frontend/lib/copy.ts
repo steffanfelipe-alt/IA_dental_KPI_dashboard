@@ -24,6 +24,21 @@ import type { NivelEmbudo } from "@/lib/types";
  * marketing-funnel reading order (captación → conversión → retención →
  * reactivación, con "operación" al final como categoría no-embudo),
  * a judgment call flagged in apply-progress, not SPEC-confirmed wording.
+ *
+ * `sistemas.metricasYEstado.*` (Slice 2 WU-B1, "Métricas y Estado" data
+ * layer): `tituloDirectas`/`tituloIndirectas` are the two section headers
+ * `MetricasEstado.tsx` (WU-B2, not yet wired) will render
+ * `MetricaConObjetivoSistema[]` under, split by `relacion`.
+ * `disclaimerIndirectas` is the "possible improvement, no promise" copy
+ * the spec's "Indirect metric labeled as non-promised" scenario requires.
+ * `noImplementadoAun` is the SPEC "System not yet implemented" scenario's
+ * explicit not-measurable state, shown instead of a delta when
+ * `Sistema.fechaImplementacion` is absent. `bloqueMetricasYEstadoTodo`
+ * deliberately STAYS (not removed by WU-B1): `sistemas/page.tsx` still
+ * renders it as the visible `TODO(felpa)` placeholder — WU-B2 (a separate,
+ * blocked-on-this work unit) is the one that swaps the placeholder for
+ * `metricasYEstado.*` and deletes this key; removing it here now would
+ * break that file's build before B2 lands.
  */
 export const COPY = {
   panel: {
@@ -43,8 +58,16 @@ export const COPY = {
     panoramaTotal: "Sistemas en el catálogo",
     bloqueCatalogo: "Catálogo",
     bloqueMetricasYEstado: "Métricas y estado",
-    /** SPEC scenario "Undefined block placeholder": visible TODO(felpa), not invented content. */
+    /** SPEC scenario "Undefined block placeholder": visible TODO(felpa), not invented content. Removed by WU-B2, not WU-B1 — see this file's header. */
     bloqueMetricasYEstadoTodo: 'TODO(felpa): diseño de "Métricas y estado" sin confirmar (SPEC §13) — placeholder visible a propósito.',
+    metricasYEstado: {
+      tituloDirectas: "Métricas directas",
+      tituloIndirectas: "Métricas indirectas",
+      /** SPEC scenario "Indirect metric labeled as non-promised": possible improvement, never a promise. */
+      disclaimerIndirectas: "Mejora posible gracias a este sistema, sin garantía: estas métricas no son su objetivo directo.",
+      /** SPEC scenario "System not yet implemented": explicit not-measurable state instead of a delta. */
+      noImplementadoAun: "Todavía no implementado: sin fecha de implementación, no hay impacto medible.",
+    },
   },
 } as const;
 

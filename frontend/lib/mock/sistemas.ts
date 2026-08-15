@@ -17,16 +17,30 @@
  * `components/systems/SystemsBlock.tsx`) has something real to render
  * against in a manual `/panel` check. PR4/PR6 extend this list if a
  * screen needs more variety once it's actually being built against.
+ *
+ * Slice 2 (WU-B1, "Métricas y estado"): every `metricaAsociada` call now
+ * tags `relacion` — "directa" (the system's `kpi_objetivo`) or
+ * "indirecta" (possible improvement, no promise — `kpis_secundarios`).
+ * `recordatorios-turnos` (already `implementado`) gets 9 indirect
+ * associations on top of its existing direct one, so the "Métricas y
+ * estado" block (WU-B2) has a real "exhaustive indirect listing, no
+ * show-more" fixture (SPEC scenario) to render against — the 4 new
+ * `lib/mock/panel.ts` metrics exist for exactly this.
  */
 import type { CredencialSistema, DependenciaSistema, MetricaConObjetivoSistema, PasoSistema, Sistema } from "@/lib/types";
 import { MOCK_METRICAS } from "@/lib/mock/panel";
 
-function metricaAsociada(slug: string, objetivoPostSistema: number | null, valorAlImplementar: number | null): MetricaConObjetivoSistema {
+function metricaAsociada(
+  slug: string,
+  objetivoPostSistema: number | null,
+  valorAlImplementar: number | null,
+  relacion: NonNullable<MetricaConObjetivoSistema["relacion"]>,
+): MetricaConObjetivoSistema {
   const base = MOCK_METRICAS.find((m) => m.slug === slug);
   if (!base) {
     throw new Error(`lib/mock/sistemas.ts: no existe la métrica mockeada "${slug}" en lib/mock/panel.ts`);
   }
-  return { ...base, objetivoPostSistema, valorAlImplementar };
+  return { ...base, objetivoPostSistema, valorAlImplementar, relacion };
 }
 
 function paso(id: string, titulo: string, responsable: PasoSistema["responsable"], completado: boolean): PasoSistema {
@@ -52,7 +66,21 @@ export const MOCK_SISTEMAS: Sistema[] = [
     ],
     dependencias: [],
     credenciales: [{ id: "recordatorios-cred-1", nombre: "Token de WhatsApp Business API", estado: "verificada", instrucciones: "Ya verificado, no requiere acción." } satisfies CredencialSistema],
-    metricas: [metricaAsociada("tasa-no-show", 10, 26)],
+    metricas: [
+      metricaAsociada("tasa-no-show", 10, 26, "directa"),
+      // 9 indirect associations (SPEC "Exhaustive indirect listing"):
+      // possible improvement from fewer no-shows / better communication,
+      // never this system's promised target.
+      metricaAsociada("tiempo-primera-respuesta", null, 6.5, "indirecta"),
+      metricaAsociada("tasa-agendamiento", null, 30, "indirecta"),
+      metricaAsociada("tasa-recall-retencion", null, 58, "indirecta"),
+      metricaAsociada("tasa-cobro", null, 87, "indirecta"),
+      metricaAsociada("tasa-reactivacion", null, 10, "indirecta"),
+      metricaAsociada("tasa-aceptacion-presupuestos", null, 47, "indirecta"),
+      metricaAsociada("consultas-nuevas", null, 40, "indirecta"),
+      metricaAsociada("produccion-hora-sillon", null, 3600, "indirecta"),
+      metricaAsociada("horas-tareas-repetitivas", null, 24, "indirecta"),
+    ],
   },
   {
     slug: "campana-reactivacion",
@@ -74,7 +102,7 @@ export const MOCK_SISTEMAS: Sistema[] = [
     ],
     dependencias: [{ id: "reactivacion-dep-1", titulo: "Recordatorios de turnos activo", requerida: false, cumplida: true, sistemaSlug: "recordatorios-turnos" } satisfies DependenciaSistema],
     credenciales: [{ id: "reactivacion-cred-1", nombre: "Token de WhatsApp Business API", estado: "pendiente", instrucciones: "Compartir el token generado en Meta Business Suite." } satisfies CredencialSistema],
-    metricas: [metricaAsociada("tasa-reactivacion", 22, null)],
+    metricas: [metricaAsociada("tasa-reactivacion", 22, null, "directa")],
   },
   {
     slug: "seguimiento-presupuestos",
@@ -92,7 +120,7 @@ export const MOCK_SISTEMAS: Sistema[] = [
     pasos: [paso("presupuestos-1", "Conectar planilla de presupuestos", "clinica", false)],
     dependencias: [],
     credenciales: [],
-    metricas: [metricaAsociada("tasa-aceptacion-presupuestos", 65, null)],
+    metricas: [metricaAsociada("tasa-aceptacion-presupuestos", 65, null, "directa")],
   },
   {
     slug: "programa-referidos",
@@ -108,7 +136,7 @@ export const MOCK_SISTEMAS: Sistema[] = [
     pasos: [paso("referidos-1", "Definir el incentivo a ofrecer", "clinica", false)],
     dependencias: [],
     credenciales: [],
-    metricas: [metricaAsociada("consultas-nuevas", 70, null)],
+    metricas: [metricaAsociada("consultas-nuevas", 70, null, "directa")],
   },
   {
     slug: "dashboard-financiero",
@@ -125,7 +153,7 @@ export const MOCK_SISTEMAS: Sistema[] = [
     pasos: [paso("financiero-1", "Conectar planilla de facturación", "clinica", true)],
     dependencias: [],
     credenciales: [],
-    metricas: [metricaAsociada("produccion-hora-sillon", null, 3600)],
+    metricas: [metricaAsociada("produccion-hora-sillon", null, 3600, "directa")],
   },
   {
     slug: "automatizacion-cobros",
@@ -141,7 +169,7 @@ export const MOCK_SISTEMAS: Sistema[] = [
     pasos: [paso("cobros-1", "Conectar pasarela de pagos", "clinica", false)],
     dependencias: [],
     credenciales: [],
-    metricas: [metricaAsociada("horas-tareas-repetitivas", 8, null)],
+    metricas: [metricaAsociada("horas-tareas-repetitivas", 8, null, "directa")],
   },
   {
     slug: "encuestas-post-turno",
@@ -157,6 +185,6 @@ export const MOCK_SISTEMAS: Sistema[] = [
     pasos: [paso("encuestas-1", "Elegir plataforma de encuestas", "clinica", false)],
     dependencias: [],
     credenciales: [],
-    metricas: [metricaAsociada("tasa-no-show", 10, 26)],
+    metricas: [metricaAsociada("tasa-no-show", 10, 26, "directa")],
   },
 ];

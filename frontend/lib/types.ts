@@ -101,4 +101,20 @@ export interface Sistema {
 export interface MetricaConObjetivoSistema extends Metrica {
   objetivoPostSistema: number | null;
   valorAlImplementar: number | null; // para medir el delta real
+  /**
+   * Slice 2 "Métricas y estado" (`/sistemas`): "directa" = vinculada por
+   * `kpi_objetivo` (el sistema promete moverla), "indirecta" = vinculada
+   * por `kpis_secundarios` (mejora posible, sin promesa). Optional porque
+   * Slice 1 fixtures/consumers (`MetricCard`, `lib/data/metricas.ts`)
+   * predate this split and never set it.
+   */
+  relacion?: "directa" | "indirecta";
+  /**
+   * Delta real desde `Sistema.fechaImplementacion`: `signo(direccion) *
+   * (valorActual - valorAlImplementar)`. `null` cuando el sistema todavía
+   * no tiene `fechaImplementacion` (nada que medir todavía) — ver
+   * `lib/data/sistemas.ts::getSistema`. Optional for the same Slice 1
+   * back-compat reason as `relacion`.
+   */
+  impactoReal?: number | null;
 }

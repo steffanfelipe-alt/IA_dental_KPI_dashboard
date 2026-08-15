@@ -12,7 +12,11 @@
  *   (`lib/types/metricas.ts`) — see that file's docstring for why it isn't
  *   a real API contract yet.
  *
- * KPI universe (21 KPIs, ids 1-21) mirrors `parser/vocabulario/schema.py::KPI_FORMULAS`.
+ * KPI universe (16 KPIs, ids 1-10, 12-13, 15-16, 19, 21 — not renumbered)
+ * mirrors `parser/vocabulario/schema.py::KPI_FORMULAS` after Slice 2 pruned
+ * 5 KPIs (11, 14, 17, 18, 20) with no catalog link, no real benchmark, and
+ * no frontend use. IDs were kept discontinuous rather than renumbered, same
+ * as `schema.py`, to avoid breaking downstream `kpi_id` references.
  */
 import type { Diagnostico, DiagnosticoResponse, InformeResponse } from "../types/api";
 import type { MetricaCalculada } from "../types/metricas";
@@ -35,8 +39,9 @@ function serieDe(valores: number[]): Record<string, number> {
 /**
  * Transcribed 1:1 from `BENCHMARKS_AR[kpi_id].mejor_es`
  * (`parser/diagnostico/benchmarks.py`) — spec "Declared Metric Direction".
- * `null` for the 6 KPIs (11, 14, 16, 17, 18, 20) with no declared
- * direction there. NEVER inferred from the series trend.
+ * `null` for KPI 16, the only remaining KPI with no declared direction
+ * there (Slice 2 pruned the other 5 undeclared-direction KPIs: 11, 14,
+ * 17, 18, 20). NEVER inferred from the series trend.
  */
 const DIRECCION_POR_KPI: Record<number, Direccion | null> = {
   1: "mayor_mejor",
@@ -49,16 +54,11 @@ const DIRECCION_POR_KPI: Record<number, Direccion | null> = {
   8: "mayor_mejor",
   9: "mayor_mejor",
   10: "mayor_mejor",
-  11: null,
   12: "mayor_mejor",
   13: "mayor_mejor",
-  14: null,
   15: "menor_mejor",
   16: null,
-  17: null,
-  18: null,
   19: "menor_mejor",
-  20: null,
   21: "mayor_mejor",
 };
 
@@ -117,11 +117,12 @@ function metricaSinSerie(
 }
 
 /**
- * ~21 KPIs (design "Métricas grid" requirement, matches the full KPI
- * universe in `parser/vocabulario/schema.py::KPI_FORMULAS`). Ids 17-20
- * carry `serie: null` because their real formulas don't produce a
- * meaningful monthly time series (deltas, per-treatment breakdowns, or
- * combined dict results) — kept as single-value metrics for the mock.
+ * 16 KPIs (design "Métricas grid" requirement, matches the full KPI
+ * universe in `parser/vocabulario/schema.py::KPI_FORMULAS` after Slice 2
+ * pruned 5 KPIs with no catalog link, no real benchmark, and no frontend
+ * use). Id 19 carries `serie: null` because its real formula produces a
+ * combined dict result rather than a meaningful monthly time series —
+ * kept as a single-value metric for the mock.
  */
 export const MOCK_METRICAS: MetricaCalculada[] = [
   metricaConSerie(1, "Consultas nuevas / mes", "conteo", [42, 45, 41, 48, 50, 53], 0.92, ["planilla_turnos.xlsx"]),
@@ -191,14 +192,6 @@ export const MOCK_METRICAS: MetricaCalculada[] = [
     ["planilla_marketing.xlsx"],
   ),
   metricaConSerie(
-    11,
-    "Throughput (ingresos cobrados)",
-    "$",
-    [1250000, 1310000, 1180000, 1390000, 1420000, 1465000],
-    0.95,
-    ["planilla_facturacion.xlsx"],
-  ),
-  metricaConSerie(
     12,
     "Producción por hora-sillón",
     "$/hora",
@@ -213,14 +206,6 @@ export const MOCK_METRICAS: MetricaCalculada[] = [
     [88.0, 89.5, 87.2, 90.1, 91.0, 91.8],
     0.93,
     ["planilla_facturacion.xlsx"],
-  ),
-  metricaConSerie(
-    14,
-    "Valor del paciente (LTV)",
-    "$",
-    [42000, 43500, 41200, 44800, 45600, 46900],
-    0.81,
-    ["planilla_pacientes.xlsx"],
   ),
   metricaConSerie(
     15,
@@ -238,8 +223,6 @@ export const MOCK_METRICAS: MetricaCalculada[] = [
     0.68,
     ["respuestas_diagnostico"],
   ),
-  metricaSinSerie(17, "Horas-persona liberadas / mes", "hs/mes", 68.5, 0.65, ["respuestas_diagnostico"]),
-  metricaSinSerie(18, "Tareas que dependen de una sola persona", "conteo", 4, 0.75, ["respuestas_diagnostico"]),
   metricaSinSerie(
     19,
     "Costo adquisición vs. reactivación",
@@ -247,14 +230,6 @@ export const MOCK_METRICAS: MetricaCalculada[] = [
     1850,
     0.6,
     ["planilla_marketing.xlsx", "planilla_campanas.xlsx"],
-  ),
-  metricaSinSerie(
-    20,
-    "Rentabilidad por tratamiento",
-    "$",
-    3200,
-    0.58,
-    ["planilla_tratamientos.xlsx", "planilla_costos.xlsx"],
   ),
   metricaConSerie(
     21,

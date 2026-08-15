@@ -25,20 +25,17 @@ import type { NivelEmbudo } from "@/lib/types";
  * reactivación, con "operación" al final como categoría no-embudo),
  * a judgment call flagged in apply-progress, not SPEC-confirmed wording.
  *
- * `sistemas.metricasYEstado.*` (Slice 2 WU-B1, "Métricas y Estado" data
- * layer): `tituloDirectas`/`tituloIndirectas` are the two section headers
- * `MetricasEstado.tsx` (WU-B2, not yet wired) will render
- * `MetricaConObjetivoSistema[]` under, split by `relacion`.
- * `disclaimerIndirectas` is the "possible improvement, no promise" copy
- * the spec's "Indirect metric labeled as non-promised" scenario requires.
- * `noImplementadoAun` is the SPEC "System not yet implemented" scenario's
- * explicit not-measurable state, shown instead of a delta when
- * `Sistema.fechaImplementacion` is absent. `bloqueMetricasYEstadoTodo`
- * deliberately STAYS (not removed by WU-B1): `sistemas/page.tsx` still
- * renders it as the visible `TODO(felpa)` placeholder — WU-B2 (a separate,
- * blocked-on-this work unit) is the one that swaps the placeholder for
- * `metricasYEstado.*` and deletes this key; removing it here now would
- * break that file's build before B2 lands.
+ * `sistemas.metricasYEstado.*` (Slice 2 WU-B1 data layer, wired by WU-B2):
+ * `tituloDirectas`/`tituloIndirectas` are the two section headers
+ * `MetricasEstado.tsx` renders `MetricaConObjetivoSistema[]` under, split
+ * by `relacion`. `disclaimerIndirectas` is the "possible improvement, no
+ * promise" copy the spec's "Indirect metric labeled as non-promised"
+ * scenario requires. `noImplementadoAun` is the SPEC "System not yet
+ * implemented" scenario's explicit not-measurable state, shown instead of
+ * a delta when a metric's `impactoReal` is `null`. WU-B2 deleted the
+ * `bloqueMetricasYEstadoTodo` `TODO(felpa)` placeholder key WU-B1 kept
+ * alive for exactly this handoff — `sistemas/page.tsx` now renders
+ * `metricasYEstado.*` via `MetricasEstado` instead.
  */
 export const COPY = {
   panel: {
@@ -58,8 +55,6 @@ export const COPY = {
     panoramaTotal: "Sistemas en el catálogo",
     bloqueCatalogo: "Catálogo",
     bloqueMetricasYEstado: "Métricas y estado",
-    /** SPEC scenario "Undefined block placeholder": visible TODO(felpa), not invented content. Removed by WU-B2, not WU-B1 — see this file's header. */
-    bloqueMetricasYEstadoTodo: 'TODO(felpa): diseño de "Métricas y estado" sin confirmar (SPEC §13) — placeholder visible a propósito.',
     metricasYEstado: {
       tituloDirectas: "Métricas directas",
       tituloIndirectas: "Métricas indirectas",

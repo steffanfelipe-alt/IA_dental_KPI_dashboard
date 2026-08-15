@@ -23,6 +23,7 @@ vi.mock("recharts", () => ({
   YAxis: () => null,
   LabelList: () => null,
   Cell: () => null,
+  Tooltip: () => null,
 }));
 
 const diagnostico: DiagnosticoResponse = {

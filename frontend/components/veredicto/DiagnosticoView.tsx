@@ -1,6 +1,7 @@
 "use client";
 
-import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { ChartTooltip } from "@/components/charts/ChartTooltip";
 import { Panel } from "@/components/ui/Panel";
 import { InformeText } from "@/components/veredicto/InformeText";
 import type { DiagnosticoResponse, EstadoEvidencia, InformeResponse } from "@/lib/types/api";
@@ -63,6 +64,7 @@ export function DiagnosticoView({
 
   const fuertes = items.filter((item) => FUERTE_ESTADOS.includes(item.estado));
   const debiles = items.filter((item) => DEBIL_ESTADOS.includes(item.estado));
+  const total = data.reduce((sum, row) => sum + row.cantidad, 0);
 
   return (
     <div className="flex flex-col gap-6">
@@ -88,6 +90,7 @@ export function DiagnosticoView({
                 axisLine={{ stroke: "#e5e7eb" }}
                 tick={{ fontSize: 12, fill: "#6b7280" }}
               />
+              <Tooltip content={(props) => <ChartTooltip {...props} total={total} />} cursor={{ fill: "#f3f4f6" }} />
               <Bar dataKey="cantidad" isAnimationActive={false}>
                 {data.map((row) => (
                   <Cell key={row.estado} fill={ESTADO_COLOR[row.estado]} />

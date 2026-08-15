@@ -7,7 +7,7 @@ Contenido de esta entrega:
   nuevas/mes y ticket promedio, más la nota sobre por qué 7 KPIs financieros
   no se preguntan verbalmente).
 
-- **parser/** — Motor de KPIs: esquema de variables + las 21 fórmulas
+- **parser/** — Motor de KPIs: esquema de variables + las 16 fórmulas
   (`schema.py`), chequeo de cobertura por variable (`coverage.py`),
   resolución de conflictos de migración (`conflictos.py`), preguntas
   reales del wizard (`preguntas_wizard.py`), orquestador (`pipeline.py`),

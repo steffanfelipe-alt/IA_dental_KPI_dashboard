@@ -8,11 +8,17 @@ en `VARIABLE_TYPES`/`METRICAS` con `no_confundir_con` para que un extractor
 no las funda con `no_shows` / `pacientes_atendidos_periodo`, y deben quedar
 EXCLUIDAS de `ETAPAS_EMBUDO`/`DENOMINADORES_VOLUMEN` (una no es etapa de
 embudo, la otra es un stock, no un volumen de trabajo del período).
+
+También cubre Slice 2 (poda de KPIs): `KPI_FORMULAS` quedó en 16 entradas
+tras remover los IDs 11/14/17/18/20 (sin renumerar los que quedan), y
+`ltv_real()` sigue siendo el único camino de cálculo de LTV.
 """
 
 from parser.vocabulario.schema import (
     DENOMINADORES_VOLUMEN,
     ETAPAS_EMBUDO,
+    KPI_BY_ID,
+    KPI_FORMULAS,
     METRICAS,
     VARIABLE_TYPES,
 )
@@ -73,6 +79,36 @@ def test_nuevas_variables_tienen_pregunta_de_wizard():
         pregunta = obtener_pregunta(var)
         assert pregunta is not None and pregunta.variable == var
         assert pregunta.pregunta, f"{var} no puede tener texto de pregunta vacío"
+
+
+def test_kpi_formulas_tiene_16_entradas_tras_la_poda_de_slice_2():
+    assert len(KPI_FORMULAS) == 16, (
+        f"KPI_FORMULAS debería tener 16 entradas post-poda, tiene {len(KPI_FORMULAS)}"
+    )
+    assert len(KPI_BY_ID) == 16
+
+
+def test_kpis_podados_no_resuelven_en_kpi_by_id():
+    # 11 (Throughput), 14 (slot de fórmula LTV), 17 (horas-persona
+    # liberadas), 18 (tareas sin backup), 20 (rentabilidad por tratamiento)
+    # — podados por no tener linkeo a catálogo, benchmark real ni uso en
+    # frontend. IDs NO renumerados: 21 (penetración de reactivación) sigue
+    # siendo 21 para no romper kpi_objetivo/kpis_secundarios del catálogo.
+    for kpi_id in (11, 14, 17, 18, 20):
+        assert kpi_id not in KPI_BY_ID, f"KPI {kpi_id} debería haberse podado en Slice 2"
+    assert 21 in KPI_BY_ID, "KPI 21 no se renumera aunque el set haya bajado a 16 entradas"
+
+
+def test_ltv_real_sigue_siendo_el_unico_camino_de_ltv():
+    # KPI 14 (que promediaba ingreso_por_paciente) se podó — ltv_real()
+    # en metricas_paciente.py, independiente de KPI_FORMULAS, debe seguir
+    # funcionando sin que la poda la afecte.
+    from parser.pacientes.metricas_paciente import ltv_real
+
+    ledger = {
+        "P1": [{"periodo": "2026-01", "tipo_evento": "pago", "monto": 50000, "tratamiento": "Control"}],
+    }
+    assert ltv_real(ledger) == {"P1": 50000.0}
 
 
 if __name__ == "__main__":

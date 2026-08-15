@@ -2,15 +2,15 @@
 metricas_paciente.py
 
 Fase 2 del plan de evolución: las métricas que la identidad de paciente
-(matching.py + ledger.py) desbloquea y que las 21 fórmulas de schema.py no
+(matching.py + ledger.py) desbloquea y que las 16 fórmulas de schema.py no
 pueden expresar por diseño — KPI 4 (no-show), por ejemplo, es un agregado:
 "22% de no-show" no distingue 40 pacientes fallando una vez de 6 fallando
 siempre, y son dos problemas con dos intervenciones distintas.
 
 Deliberadamente NO viven en `schema.KPI_FORMULAS`: ese registro es un
-catálogo cerrado de 21 fórmulas (las primeras 20 vienen 1:1 de la tabla del
-Miro; la 21 se agregó después — ver docstring de schema.py) y agregar 17
-fórmulas ahí rompería ese contrato con todo lo que asume ese catálogo fijo
+catálogo cerrado de 16 fórmulas (ver docstring de schema.py para la
+historia de por qué son 16 y no las 21 originales) y agregar 17 fórmulas
+ahí rompería ese contrato con todo lo que asume ese catálogo fijo
 (coverage.py, priorizacion.py, interpretacion.py). Esta es una capa aparte
 que opera sobre `ledger_pacientes` — ver ledger.py para el contrato de
 eventos y la nota de scope sobre extracción en vivo.

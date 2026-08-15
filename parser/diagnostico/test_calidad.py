@@ -9,6 +9,7 @@ payload de pipeline.procesar_migracion, sin ninguna extracción nueva.
 from parser.diagnostico.calidad import evaluar_calidad, suficiencia_datos
 from parser.cobertura_calidad.coverage import VariableValue
 from parser.cobertura_calidad.reconciliacion import FUENTE_DERIVADA
+from parser.vocabulario.schema import KPI_FORMULAS
 
 
 def _payload_base(**overrides):
@@ -45,13 +46,26 @@ def test_cuarentena_no_vacia_baja_la_consistencia():
 
 def test_completitud_excluye_kpis_bloqueados_por_diseno():
     # Si los únicos 2 KPIs bloqueados por diseño son los únicos que
-    # "faltan", la completitud debería ser 100%, no 90% — no tiene sentido
-    # penalizar algo que nunca se le pide al dueño.
-    kpis_calculados = {i: {} for i in range(1, 20)}  # 19 de los 21
+    # "faltan", la completitud debería ser 100%, no menos — no tiene
+    # sentido penalizar algo que nunca se le pide al dueño.
+    kpis_calculados = {i: {} for i in range(1, 15)}  # 14 de los 16
     reporte = evaluar_calidad(_payload_base(
-        kpis_calculados=kpis_calculados, kpis_bloqueados_por_diseno=[16, 17],
+        kpis_calculados=kpis_calculados, kpis_bloqueados_por_diseno=[15, 16],
     ))
     assert reporte.completitud_pct == 100.0
+
+
+def test_denominador_de_completitud_deriva_de_len_kpi_formulas_no_hardcodeado():
+    # Coverage Denominator Consistency (spec kpi-vocabulario): con 3 KPIs
+    # bloqueados por diseño, el denominador debe ser len(KPI_FORMULAS) - 3
+    # = 16 - 3 = 13, nunca un "21"/"20" hardcodeado.
+    kpis_calculados = {i: {} for i in range(1, 14)}  # 13 calculados
+    reporte = evaluar_calidad(_payload_base(
+        kpis_calculados=kpis_calculados, kpis_bloqueados_por_diseno=[100, 101, 102],
+    ))
+    kpis_relevantes_esperado = len(KPI_FORMULAS) - 3
+    assert kpis_relevantes_esperado == 13, "len(KPI_FORMULAS) debería ser 16 tras la poda de Slice 2"
+    assert reporte.completitud_pct == round(100 * 13 / kpis_relevantes_esperado, 1) == 100.0
 
 
 def test_kpis_afectados_incluye_error_conflicto_y_cuarentena():

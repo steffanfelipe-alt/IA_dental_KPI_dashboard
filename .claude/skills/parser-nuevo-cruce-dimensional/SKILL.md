@@ -1,11 +1,11 @@
 ---
 name: parser-nuevo-cruce-dimensional
-description: Agregar una operación dimensional legal a cruces.py (OPERACIONES_LEGALES) o un tipo de cruce derivado nuevo. Usar cuando se quiera habilitar una métrica cruzada fuera de las 20 KPIFormula fijas (ej. una razón monto/conteo o conteo/horas nueva).
+description: Agregar una operación dimensional legal a cruces.py (OPERACIONES_LEGALES) o un tipo de cruce derivado nuevo. Usar cuando se quiera habilitar una métrica cruzada fuera de las 16 KPIFormula fijas (ej. una razón monto/conteo o conteo/horas nueva).
 ---
 
 # Agregar un cruce dimensional
 
-`cruces.py` genera métricas fuera de las 20 fórmulas fijas, en dos capas deterministas SIN API:
+`cruces.py` genera métricas fuera de las 16 fórmulas fijas, en dos capas deterministas SIN API:
 embudo (razones etapa-posterior/etapa-anterior) y álgebra de unidades (análisis dimensional).
 Un `Cruce` no es un KPI: no tiene `kpi_id` ni entra a coverage/diagnóstico/priorización.
 

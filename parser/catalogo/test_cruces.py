@@ -3,7 +3,7 @@ test_cruces.py
 
 Sin pytest, sin API (cruces.py no importa anthropic): corre con
 `python -m parser.catalogo.test_cruces`. Fase B del plan de evolución — cruces
-determinísticos fuera de las 21 KPIFormula fijas.
+determinísticos fuera de las 16 KPIFormula fijas.
 """
 
 from parser.cobertura_calidad.coverage import VariableValue
@@ -261,7 +261,7 @@ def test_resta_de_montos_da_positivo_con_el_mayor_como_minuendo():
 
 
 # ---------------------------------------------------------------------------
-# Orquestador: deduplicación contra el catálogo de 21 KPIs
+# Orquestador: deduplicación contra el catálogo de 16 KPIs
 # ---------------------------------------------------------------------------
 
 def _variables_catalogo_completo():
@@ -294,7 +294,7 @@ def test_generar_cruces_excluye_los_7_pares_ya_en_el_catalogo():
     }
     obtenidos = {(c.variable_a, c.variable_b) for c in cruces}
     interseccion = obtenidos & pares_catalogo
-    assert interseccion == set(), f"estos pares ya los calcula el catálogo de 21 KPIs: {interseccion}"
+    assert interseccion == set(), f"estos pares ya los calcula el catálogo de 16 KPIs: {interseccion}"
 
 
 def test_generar_cruces_si_solo_hay_un_par_del_catalogo_devuelve_lista_vacia():

@@ -2,7 +2,7 @@
 formato.py
 
 Formato de números para MOSTRAR al dueño de la clínica y para que el
-agente los CITE en su texto — nunca para razonar. Las 21 fórmulas de
+agente los CITE en su texto — nunca para razonar. Las 16 fórmulas de
 schema.py y el agente siempre trabajan con el número crudo; esto solo
 maquilla la salida (hallazgo 1.2 del informe de deficiencias: el agente
 devolvía "15000" en vez de "$15.000").

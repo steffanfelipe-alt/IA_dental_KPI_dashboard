@@ -4,11 +4,11 @@ matching.py
 Fase 2 del plan de evolución (deficiencias-parser-kpis.md, punto 3):
 "record linkage" / entity resolution de pacientes. `ingreso_por_paciente`
 hoy se arma con el string crudo de la columna de nombre — "Juan Pérez" y
-"J. Perez" terminan siendo dos claves distintas, y KPI 14 (LTV,
-sum(values)/len(values)) queda silenciosamente subestimado sin que nadie
-lo note. Esta misma resolución de identidad potencia además retención,
-frecuencia de visitas, reactivación y ticket por cliente — no es solo
-para LTV.
+"J. Perez" terminan siendo dos claves distintas, y el LTV real
+(`ltv_real()` en metricas_paciente.py) queda silenciosamente subestimado
+sin que nadie lo note. Esta misma resolución de identidad potencia además
+retención, frecuencia de visitas, reactivación y ticket por cliente — no
+es solo para LTV.
 
 Motor de similitud: rapidfuzz si está instalada, fallback a difflib de la
 stdlib si no. rapidfuzz importa porque resuelve apellidos compuestos

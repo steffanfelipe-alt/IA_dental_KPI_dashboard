@@ -17,7 +17,7 @@ parser/
   __init__.py
 
   vocabulario/                 Vocabulario compartido (kernel)
-    schema.py                  ~28 variables + las 21 fórmulas de KPIs
+    schema.py                  ~28 variables + las 16 fórmulas de KPIs
     formato.py                 Formatea un valor según su unidad (ARS, %, horas) para la UI
     periodos.py                Normaliza etiquetas de período a clave canónica ("2026-04")
     claude_utils.py            Helpers compartidos: extraer_texto (saltea bloques de thinking)
@@ -57,7 +57,7 @@ parser/
 
   catalogo/                    Catálogo tecnológico y cruces dimensionales
     catalogo_tecnologico.py     ~35 intervenciones reales de Agencia IA, indexadas por etapa del funnel
-    cruces.py                   Métricas derivadas fuera de las 21 KPIFormula (embudo + álgebra de unidades)
+    cruces.py                   Métricas derivadas fuera de las 16 KPIFormula (embudo + álgebra de unidades)
     cruces_propuestos.py        El modelo propone qué cruzar; nunca calcula el número
 
   interpretacion/              Interpretación y explicación para el asistente
@@ -193,7 +193,7 @@ assert not any(p["variable"] == "no_shows" for p in variables_para_wizard(result
 
 ### Benchmarks argentinos + interpretación del asistente
 
-De los 21 KPIs, 13 se comparan contra un benchmark (los otros 8 no: 7 son
+De los 16 KPIs, 13 se comparan contra un benchmark (los otros 3 no: 2 son
 financieros/internos, dependen 100% del historial propio — ver
 `SOLO_MIGRACION_O_SISTEMA` e `INTERNAL_VARIABLES` en `schema.py` —, más el
 KPI 21, que es `sin_benchmark` como el KPI 10). El
@@ -300,7 +300,7 @@ rankear por encima de un gap mediano contra un dato oficial.
   matching, y pasarlo igual por ahí demostró fusionar en silencio
   identificadores como `"Paciente 1"`/`"Paciente 2"`/`"Paciente 3"`.
 - **`ledger.py` + `metricas_paciente.py`**: `ledger_pacientes`
-  (`{paciente_id: [eventos]}`) es el insumo de 17 métricas que las 20
+  (`{paciente_id: [eventos]}`) es el insumo de 17 métricas que las 16
   fórmulas de `schema.py` no pueden expresar (no-show recurrente por
   paciente, LTV real, concentración de ingresos, retención por cohorte,
   etc. — ver el docstring de `metricas_paciente.py` para la lista
@@ -384,7 +384,7 @@ parte de la suite de regresión (es 100% determinista, no llama a Claude).
 
 ## Cruces determinísticos y propuestos (Fases B/C/F)
 
-`cruces.py` calcula métricas fuera de las 21 `KPIFormula` fijas, en dos
+`cruces.py` calcula métricas fuera de las 16 `KPIFormula` fijas, en dos
 capas deterministas sin API: la capa de embudo (toda razón
 etapa-posterior/etapa-anterior es una conversión válida por construcción,
 vía `ETAPAS_EMBUDO`) y la capa de álgebra de unidades (análisis dimensional

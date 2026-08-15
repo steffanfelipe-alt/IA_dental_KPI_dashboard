@@ -17,7 +17,7 @@ Supabase/Postgres.
 
 Separado en dos pares de métodos (variables / respuestas_diagnostico) en
 vez de uno solo genérico porque `procesar_migracion` ya los recibe como
-parámetros separados — alimentan cosas distintas (las 21 fórmulas de
+parámetros separados — alimentan cosas distintas (las 16 fórmulas de
 `schema.py` vs. el contexto cualitativo de `diagnostico.py`), y mezclarlos
 en un único "guardar clínica" escondería esa distinción que el resto del
 sistema ya respeta.

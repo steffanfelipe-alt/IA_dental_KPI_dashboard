@@ -709,9 +709,9 @@ if resultado:
         st.caption("Todavía no hay ningún KPI calculado para interpretar.")
 
     st.divider()
-    st.subheader("9. Cruces determinísticos (fuera del catálogo de 21 KPIs)")
+    st.subheader("9. Cruces determinísticos (fuera del catálogo de 16 KPIs)")
     st.caption(
-        "cruces.py (Fase B): métricas que ninguna de las 21 KPIFormula fijas calcula, "
+        "cruces.py (Fase B): métricas que ninguna de las 16 KPIFormula fijas calcula, "
         "generadas de dos formas, ambas sin llamar a la API — nunca mezcladas con la "
         "sección 2 de arriba, porque un cruce no tiene benchmark ni kpi_id."
     )
@@ -794,7 +794,7 @@ if resultado:
 
     st.subheader("10. Métricas de paciente (ledger_pacientes)")
     st.caption(
-        "metricas_paciente.py (Fase H4c): 17 métricas longitudinales que las 21 KPIFormula "
+        "metricas_paciente.py (Fase H4c): 17 métricas longitudinales que las 16 KPIFormula "
         "fijas no pueden expresar (necesitan historial por paciente, no un agregado "
         "mensual) — determinístico, sin API. Sección separada a propósito, mismo criterio "
         "que la 9: contrato distinto, nunca mezclado con los KPIs de arriba."

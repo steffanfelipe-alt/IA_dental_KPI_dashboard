@@ -252,7 +252,11 @@ def _ledger_con_pagos():
     }
 
 
-def test_con_ledger_de_pagos_kpi14_se_calcula_y_es_trazable():
+def test_con_ledger_de_pagos_ingreso_por_paciente_se_deriva_y_es_trazable():
+    # El KPI 14 (Valor del paciente/LTV) que antes leía esta variable se
+    # podó en Slice 2 — ingreso_por_paciente ya no cae en kpis_calculados
+    # de ningún KPIFormula, pero sigue derivándose de ltv_real() para
+    # alimentar resultado["metricas_paciente"] y quedar trazable.
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
 
     def extractor_con_ledger(path, puerto_llm, registro_clientes=None):
@@ -261,7 +265,7 @@ def test_con_ledger_de_pagos_kpi14_se_calcula_y_es_trazable():
     pipeline.EXTRACTOR_POR_EXTENSION = {".csv": _estrategia(extractor_con_ledger)}
     try:
         resultado = pipeline.procesar_migracion(["cobros.csv"], puerto_llm=None)
-        assert 14 in resultado["kpis_calculados"]
+        assert 14 not in resultado["kpis_calculados"], "KPI 14 se podó en Slice 2, nunca debería aparecer"
         ingreso = resultado["variables"]["ingreso_por_paciente"]
         assert ingreso.valor == {"P1": 130000.0, "P2": 30000.0}
         assert ingreso.fuente == "ledger_pacientes"
@@ -271,7 +275,7 @@ def test_con_ledger_de_pagos_kpi14_se_calcula_y_es_trazable():
         _restaurar_extractores(original)
 
 
-def test_ledger_sin_pagos_kpi14_sigue_bloqueado_pero_metricas_no_es_none():
+def test_ledger_sin_pagos_no_deriva_ingreso_pero_metricas_no_es_none():
     original = dict(pipeline.EXTRACTOR_POR_EXTENSION)
     ledger_sin_pagos = {"P1": [{"periodo": "2026-01", "tipo_evento": "turno_asistido", "monto": None, "tratamiento": None}]}
 

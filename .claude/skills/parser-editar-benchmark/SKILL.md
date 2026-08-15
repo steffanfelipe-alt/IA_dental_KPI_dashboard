@@ -5,8 +5,9 @@ description: Agregar o editar un benchmark argentino en benchmarks.py, o actuali
 
 # Editar un benchmark
 
-De los 20 KPIs, 13 se comparan contra un benchmark; los otros 7 son financieros/internos
-(dependen 100% del historial propio). El research (`referencias/benchmarks_research_AR.md`) es la
+De los 16 KPIs, 13 se comparan contra un benchmark; los otros 3 no tienen benchmark real
+(financieros/internos, o sin dato de mercado confiable — dependen 100% del historial propio).
+El research (`referencias/benchmarks_research_AR.md`) es la
 fuente de los valores. La regla de oro: **un rango falso es peor que no tener benchmark**.
 
 ## Campos del benchmark

@@ -65,7 +65,7 @@ def test_ultimo_saltea_none_al_final_de_la_serie():
 
 
 def test_agregado_ignora_valores_no_numericos_sin_romper():
-    # KPIs 19/20: el valor por período es un dict, no un escalar.
+    # KPI 19: el valor por período es un dict, no un escalar.
     serie = {"2026-01": {"a": 1}, "2026-02": {"a": 2}}
     assert calcular_agregado(serie, "promedio") is None
 

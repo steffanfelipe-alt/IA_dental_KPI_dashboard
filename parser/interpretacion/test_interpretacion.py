@@ -48,7 +48,10 @@ def test_interpretar_kpi_respeta_semanas_explicitas_aunque_haya_serie():
 
 
 def test_interpretar_kpi_incluye_valor_formateado():
-    resultado = interpretar_kpi(11, 5226666.67, respuestas_diagnostico={})
+    # KPI 6 (ticket promedio) es unidad="$" — cualquier KPI con esa unidad
+    # sirve para probar el formateo ARS (KPI 11, usado antes acá, se podó
+    # en Slice 2).
+    resultado = interpretar_kpi(6, 5226666.67, respuestas_diagnostico={})
     assert resultado["payload_enviado_al_asistente"]["valor_formateado"] == "$5.226.667"
 
 
@@ -68,7 +71,7 @@ def test_interpretar_panel_arma_un_kpi_por_entrada():
 
 
 def test_interpretar_panel_no_rompe_con_kpi_de_valor_dict():
-    # KPI 19 y 20 devuelven un dict (no un escalar) — no debe intentar
+    # KPI 19 devuelve un dict (no un escalar) — no debe intentar
     # calcular_gap sobre eso.
     kpis_calculados = {
         19: {"nombre": "Costo adquisición vs. reactivación",
